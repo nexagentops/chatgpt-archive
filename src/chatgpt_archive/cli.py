@@ -46,10 +46,11 @@ def discover_command(
     profile_dir: Path = typer.Option(Path(".playwright-profile")),
     limit: int | None = typer.Option(None, min=1, help="Stop after this many unique conversations."),
     verbose: bool = typer.Option(False, help="Print non-sensitive discovery counts."),
+    cdp_url: str | None = typer.Option(None, help="Optional loopback Chrome Beta CDP endpoint; never a profile path."),
 ) -> None:
     """Discover sidebar conversations and merge them into a resumable manifest."""
     store, profile = paths(data_dir, profile_dir)
-    with authenticated_page(profile, headless=True) as page:
+    with authenticated_page(profile, headless=not cdp_url, cdp_url=cdp_url) as page:
         page.goto(CHATGPT_HOME, wait_until="domcontentloaded")
         if not interface_is_authenticated(page):
             raise typer.Exit("Not authenticated. Run `chatgpt-archive login` first.")
@@ -68,6 +69,7 @@ def sync(
     conversation: str | None = typer.Option(None, help="Archive one discovered conversation ID."),
     debug_dir: Path | None = typer.Option(None, help="Opt-in ignored directory for failed-page screenshot and HTML."),
     verbose: bool = typer.Option(False, help="Print non-sensitive per-conversation progress."),
+    cdp_url: str | None = typer.Option(None, help="Optional loopback Chrome Beta CDP endpoint; never a profile path."),
 ) -> None:
     """Archive pending/failed entries, continuing after individual failures."""
     store, profile = paths(data_dir, profile_dir)
@@ -79,7 +81,7 @@ def sync(
             raise typer.BadParameter("Conversation ID is not pending in this manifest.", param_hint="--conversation")
     if limit:
         pending = pending[:limit]
-    with authenticated_page(profile, headless=True) as page:
+    with authenticated_page(profile, headless=not cdp_url, cdp_url=cdp_url) as page:
         if not interface_is_authenticated(page):
             page.goto(CHATGPT_HOME, wait_until="domcontentloaded")
         if not interface_is_authenticated(page):
@@ -116,12 +118,13 @@ def inspect(
     conversation_id: str,
     data_dir: Path = typer.Option(Path("data")),
     profile_dir: Path = typer.Option(Path(".playwright-profile")),
+    cdp_url: str | None = typer.Option(None, help="Optional loopback Chrome Beta CDP endpoint; never a profile path."),
 ) -> None:
     """Inspect one discovered conversation's browser workflow without printing content."""
     entry = next((item for item in ArchiveStore(data_dir).load_manifest().entries if item.conversation_id == conversation_id), None)
     if entry is None:
         raise typer.BadParameter("Conversation ID is not present in the manifest.")
-    with authenticated_page(profile_dir, headless=True) as page:
+    with authenticated_page(profile_dir, headless=not cdp_url, cdp_url=cdp_url) as page:
         observer = NetworkObserver()
         observer.attach(page)
         page.goto(entry.source_url, wait_until="domcontentloaded")

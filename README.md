@@ -33,6 +33,8 @@ chatgpt-archive inspect <conversation-id>
 
 For bounded validation, use `discover --limit 25`, `sync --limit 25`, or `sync --conversation <id>`. `inspect <id>` reports only visible-turn counts and sanitized relevant response endpoint metadata; it does not print conversation text, headers, or browser storage. `--debug-dir debug` on `sync` is opt-in and saves screenshot/HTML failure artifacts locally. Those artifacts can contain conversation content and are Git-ignored; debugging is off by default.
 
+To reuse an already-running browser without copying its profile, the commands that access ChatGPT accept `--cdp-url http://127.0.0.1:<port>`. The endpoint must be an unauthenticated loopback Chrome DevTools connection; the tool refuses remote or credential-bearing URLs. The browser must already have been started by the user with that endpoint. The tool only attaches and disconnects—it never closes that Chrome instance or reads cookies, storage, or credentials.
+
 ## Architecture
 
 `browser → discovery → extractor → normalizer/models → storage`
