@@ -23,8 +23,11 @@ def normalize_mapping(payload: dict[str, Any], source_url: str) -> Conversation:
         text = "\n".join(part for part in parts if isinstance(part, str))
         content_type = str(content.get("content_type") or "unknown")
         metadata = raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {}
+        parent = node.get("parent")
+        parent_id = parent if isinstance(parent, str) and isinstance(mapping.get(parent), dict) and isinstance(mapping[parent].get("message"), dict) else None
+        children = [str(item) for item in node.get("children", []) if isinstance(item, str) and isinstance(mapping.get(item), dict) and isinstance(mapping[item].get("message"), dict)]
         messages.append(Message(
-            id=str(raw.get("id") or node_id), parent_id=node.get("parent"), children=[str(item) for item in node.get("children", []) if isinstance(item, str)],
+            id=str(raw.get("id") or node_id), parent_id=parent_id, children=children,
             sequence=0, branch="current" if node_id in current else "alternate",
             role=str((raw.get("author") or {}).get("role") or "unknown"), content_type=content_type,
             text=text, timestamp=_timestamp(raw.get("create_time")), model=metadata.get("model_slug"), metadata=metadata,

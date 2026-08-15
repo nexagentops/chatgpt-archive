@@ -11,4 +11,5 @@ def test_normalizes_mapping_with_current_and_alternate_branches() -> None:
     conversation = normalize_mapping(payload, "https://chatgpt.com/c/c")
     assert conversation.capture_method == "structured_browser_response"
     assert conversation.conversation_tree_complete and conversation.richer_branch_data_available
-    assert [(item.id, item.branch, item.parent_id) for item in conversation.messages] == [("a", "current", "root"), ("b", "current", "a"), ("alt", "alternate", "a")]
+    assert [(item.id, item.branch, item.parent_id) for item in conversation.messages] == [("a", "current", None), ("b", "current", "a"), ("alt", "alternate", "a")]
+    assert conversation.title == "Synthetic"

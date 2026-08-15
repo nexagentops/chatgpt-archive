@@ -3,9 +3,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Protocol
+from urllib.parse import urlparse
 
 from .models import Conversation
 from .normalizer import normalize_visible_turns
+from .structured import normalize_mapping
 
 
 class ConversationAcquirer(Protocol):
@@ -31,8 +33,9 @@ def wait_for_message_locator(page: object, timeout_ms: int = 5000) -> object | N
     return None
 
 
-def extract_visible_conversation(page: object, conversation_id: str, title: str, source_url: str) -> Conversation:
-    page.goto(source_url, wait_until="domcontentloaded")
+def extract_visible_conversation(page: object, conversation_id: str, title: str, source_url: str, *, navigate: bool = True) -> Conversation:
+    if navigate:
+        page.goto(source_url, wait_until="domcontentloaded")
     locator = wait_for_message_locator(page)
     if locator is None:
         raise RuntimeError("No visible message elements found; ChatGPT DOM may have changed.")
@@ -61,4 +64,26 @@ class PlaywrightAcquirer:
         self.page = page
 
     def fetch(self, source_url: str, conversation_id: str, title: str) -> Conversation:
-        return extract_visible_conversation(self.page, conversation_id, title, source_url)
+        responses: list[object] = []
+        def observe(response: object) -> None:
+            if "/backend-api/conversation" in urlparse(response.url).path:
+                responses.append(response)
+        self.page.on("response", observe)
+        try:
+            self.page.goto(source_url, wait_until="domcontentloaded")
+            self.page.wait_for_timeout(800)
+            for response in reversed(responses):
+                try:
+                    payload = response.json()
+                    if not isinstance(payload, dict) or not isinstance(payload.get("mapping"), dict):
+                        continue
+                    conversation = normalize_mapping(payload, source_url)
+                    if conversation.conversation_id == conversation_id and conversation.messages:
+                        if conversation.title == "Untitled conversation":
+                            conversation.title = title
+                        return conversation
+                except Exception:
+                    continue
+            return extract_visible_conversation(self.page, conversation_id, title, source_url, navigate=False)
+        finally:
+            self.page.remove_listener("response", observe)
