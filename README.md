@@ -27,6 +27,12 @@ chatgpt-archive discover
 chatgpt-archive sync
 chatgpt-archive status
 chatgpt-archive inspect <conversation-id>
+chatgpt-archive reindex
+chatgpt-archive verify
+chatgpt-archive export-csv
+chatgpt-archive stats
+chatgpt-archive doctor --cdp-url http://127.0.0.1:9222
+chatgpt-archive backup /safe/empty/destination
 ```
 
 `login` opens a persistent Chromium profile for manual sign-in only. `discover` scans the visible history sidebar, scrolls it, deduplicates `/c/<id>` links, and checkpoint-merges them into `data/manifest.json`. `sync` processes all entries that are not completed, writes JSON first and Markdown second using atomic replacement, then marks each entry completed. Failed items retain a structured error and will be retried by a later sync; a failure does not stop subsequent entries.
@@ -52,6 +58,8 @@ data/
 
 JSON is canonical and Markdown is derived. File names are deterministic, ID-derived safe stems (with a short ID hash), never titles. Each JSON record explicitly marks capture as `full`, `partial`, or `failed`, and records unsupported content/branch limitations; successful storage does not imply all rich content was captured.
 
+`archive.db` is a SQLite operational index rebuilt from JSON with `reindex`; it supports fast totals and integrity cross-checks but is never the sole archive copy. `exports/conversations.csv` and `exports/messages.csv` are deterministic derived files regenerated with `export-csv`. `verify` checks JSON parsing, message parent/order invariants, Markdown presence, content hashes, and index consistency. `backup` copies archive material only and deliberately excludes the browser profile.
+
 ## Limitations
 
-This POC extracts only the currently visible message branch and visible text. It does not yet capture attachments, images, tool output, hidden/virtualized turns, creation timestamps, or regenerated-response branch graphs. ChatGPT UI changes can require selector updates. Live use needs an account the user is authorized to archive; synthetic fixtures cover automated tests, not the live service.
+DOM capture extracts only the current visible branch and visible text. It does not archive attachment/image binaries or tool output. Structured browser responses observed during ordinary navigation can normalize conversation mappings and alternate branches, but the response adapter is not yet enabled for live capture. ChatGPT UI changes can require selector updates. Live use needs an account the user is authorized to archive; synthetic fixtures cover automated tests, not the live service.

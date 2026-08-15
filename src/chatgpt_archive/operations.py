@@ -1,0 +1,91 @@
+"""Derived exports and integrity checks over canonical JSON archives."""
+from __future__ import annotations
+
+import csv
+import json
+import os
+import shutil
+import tempfile
+from collections import Counter
+from pathlib import Path
+from typing import Iterable
+
+from .models import Conversation
+from .storage import ArchiveStore
+
+
+def conversations(store: ArchiveStore) -> Iterable[tuple[Path, Conversation]]:
+    for path in sorted(store.raw_dir.glob("*.json")):
+        yield path, Conversation.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def reindex(store: ArchiveStore) -> int:
+    count = 0
+    for path, conversation in conversations(store):
+        markdown = store.markdown_dir / f"{path.stem}.md"
+        store.index.upsert(conversation, path, markdown, store.content_hash(conversation))
+        count += 1
+    return count
+
+
+def export_csv(store: ArchiveStore) -> dict[str, int]:
+    exports = store.root / "exports"
+    exports.mkdir(parents=True, exist_ok=True)
+    conversation_fields = ["conversation_id", "title", "created_at", "updated_at", "captured_at", "capture_status", "capture_method", "message_count", "user_message_count", "assistant_message_count", "has_branches", "branch_count", "has_attachments", "has_images", "has_tool_content", "json_path", "markdown_path", "schema_version", "content_hash"]
+    message_fields = ["conversation_id", "message_id", "parent_id", "sequence", "branch", "role", "timestamp", "model", "content_type", "text", "has_attachment", "has_tool_content"]
+    conv_count = message_count = 0
+    with _atomic_csv(exports / "conversations.csv", conversation_fields) as conv_writer, _atomic_csv(exports / "messages.csv", message_fields) as msg_writer:
+        for path, conversation in conversations(store):
+            messages = conversation.messages
+            conv_writer.writerow({"conversation_id": conversation.conversation_id, "title": conversation.title, "created_at": conversation.created_at, "updated_at": conversation.updated_at, "captured_at": conversation.captured_at, "capture_status": conversation.capture_status.value, "capture_method": conversation.capture_method, "message_count": len(messages), "user_message_count": sum(item.role == "user" for item in messages), "assistant_message_count": sum(item.role == "assistant" for item in messages), "has_branches": any(item.branch != "current" for item in messages), "branch_count": len({item.branch for item in messages}), "has_attachments": any(item.attachments for item in messages), "has_images": "images" in conversation.unsupported_content_types, "has_tool_content": any(item.content_type == "tool" for item in messages), "json_path": str(path), "markdown_path": str(store.markdown_dir / f"{path.stem}.md"), "schema_version": conversation.schema_version, "content_hash": store.content_hash(conversation)})
+            conv_count += 1
+            for message in messages:
+                msg_writer.writerow({"conversation_id": conversation.conversation_id, "message_id": message.id, "parent_id": message.parent_id, "sequence": message.sequence, "branch": message.branch, "role": message.role, "timestamp": message.timestamp, "model": message.model, "content_type": message.content_type, "text": message.text, "has_attachment": bool(message.attachments), "has_tool_content": message.content_type == "tool"})
+                message_count += 1
+    return {"conversations": conv_count, "messages": message_count}
+
+
+class _atomic_csv:
+    def __init__(self, path: Path, fields: list[str]): self.path, self.fields = path, fields
+    def __enter__(self):
+        self.tmp = tempfile.NamedTemporaryFile("w", newline="", encoding="utf-8", dir=self.path.parent, delete=False)
+        self.writer = csv.DictWriter(self.tmp, fieldnames=self.fields, lineterminator="\n")
+        self.writer.writeheader()
+        return self.writer
+    def __exit__(self, *args):
+        self.tmp.close()
+        if args[0] is None: os.replace(self.tmp.name, self.path)
+        else: Path(self.tmp.name).unlink(missing_ok=True)
+
+
+def verify(store: ArchiveStore) -> dict[str, int]:
+    errors = Counter()
+    seen: set[str] = set()
+    count = 0
+    indexed = {row["conversation_id"]: row for row in store.index.rows()}
+    raw_ids: set[str] = set()
+    for path, conversation in conversations(store):
+        count += 1; raw_ids.add(conversation.conversation_id)
+        if conversation.conversation_id in seen: errors["duplicate_ids"] += 1
+        seen.add(conversation.conversation_id)
+        ids = [message.id for message in conversation.messages]
+        if len(ids) != len(set(ids)): errors["duplicate_message_ids"] += 1
+        if [message.sequence for message in conversation.messages] != list(range(len(conversation.messages))): errors["ordering"] += 1
+        if any(message.parent_id and message.parent_id not in ids for message in conversation.messages): errors["broken_parents"] += 1
+        if not (store.markdown_dir / f"{path.stem}.md").exists(): errors["missing_markdown"] += 1
+        row = indexed.get(conversation.conversation_id)
+        if row is None: errors["missing_index"] += 1
+        elif row["content_hash"] != store.content_hash(conversation): errors["hash_errors"] += 1
+    errors["orphan_index"] = len(set(indexed) - raw_ids)
+    errors["orphan_files"] = len(list(store.raw_dir.glob("*.json"))) - count
+    return {"conversations": count, **dict(errors), "errors": sum(errors.values())}
+
+
+def backup(store: ArchiveStore, destination: Path) -> Path:
+    if destination.exists(): raise FileExistsError("Backup destination must not already exist.")
+    destination.mkdir(parents=True)
+    for name in ("raw", "markdown", "manifest.json", "archive.db", "exports"):
+        source = store.root / name
+        if source.is_dir(): shutil.copytree(source, destination / name)
+        elif source.exists(): shutil.copy2(source, destination / name)
+    return destination

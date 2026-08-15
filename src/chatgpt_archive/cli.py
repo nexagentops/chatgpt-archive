@@ -13,6 +13,7 @@ from .extractor import PlaywrightAcquirer
 from .markdown import render_conversation
 from .models import CaptureStatus, FailureRecord
 from .storage import ArchiveStore
+from .operations import backup as create_backup, export_csv, reindex, verify as verify_archive
 
 app = typer.Typer(help="Local-first archival for conversations owned by the authenticated ChatGPT user.")
 
@@ -111,6 +112,59 @@ def status(data_dir: Path = typer.Option(Path("data"))) -> None:
     counts = Counter(entry.status.value for entry in manifest.entries)
     typer.echo(f"discovered={len(manifest.entries)} pending={counts['pending']} completed={counts['completed']} failed={counts['failed']}")
     typer.echo(f"last_synchronization={manifest.last_synchronization_at.isoformat() if manifest.last_synchronization_at else 'never'}")
+
+
+@app.command(name="reindex")
+def reindex_command(data_dir: Path = typer.Option(Path("data"))) -> None:
+    """Rebuild the SQLite operational index from canonical JSON without altering archives."""
+    typer.echo(f"indexed={reindex(ArchiveStore(data_dir))}")
+
+
+@app.command(name="export-csv")
+def export_csv_command(data_dir: Path = typer.Option(Path("data"))) -> None:
+    """Regenerate deterministic CSV exports from canonical JSON."""
+    counts = export_csv(ArchiveStore(data_dir))
+    typer.echo(f"conversations={counts['conversations']} messages={counts['messages']}")
+
+
+@app.command()
+def verify(data_dir: Path = typer.Option(Path("data"))) -> None:
+    """Check canonical files, derived Markdown, hashes, and the operational index."""
+    result = verify_archive(ArchiveStore(data_dir))
+    typer.echo(" ".join(f"{key}={value}" for key, value in sorted(result.items())))
+    if result["errors"]:
+        raise typer.Exit(1)
+
+
+@app.command()
+def stats(data_dir: Path = typer.Option(Path("data"))) -> None:
+    """Show fast operational totals from SQLite."""
+    store = ArchiveStore(data_dir)
+    totals = store.index.totals()
+    typer.echo(f"conversations={totals['conversations']} messages={totals['messages']}")
+
+
+@app.command()
+def doctor(
+    data_dir: Path = typer.Option(Path("data")),
+    cdp_url: str | None = typer.Option(None, help="Optional loopback endpoint to validate connectivity."),
+) -> None:
+    """Check local archive health without inspecting browser storage or credentials."""
+    store = ArchiveStore(data_dir); store.initialize()
+    result = {"archive_writable": store.root.exists(), "sqlite": store.index.path.exists(), "cdp": "not_checked"}
+    if cdp_url:
+        try:
+            with authenticated_page(Path(".playwright-profile"), cdp_url=cdp_url) as page:
+                result["cdp"] = "connected"; result["chatgpt_authenticated"] = interface_is_authenticated(page)
+        except Exception:
+            result["cdp"] = "unavailable"
+    typer.echo(" ".join(f"{key}={value}" for key, value in sorted(result.items())))
+
+
+@app.command()
+def backup(destination: Path, data_dir: Path = typer.Option(Path("data"))) -> None:
+    """Copy archival data only; browser authentication state is never included."""
+    typer.echo(f"backup={create_backup(ArchiveStore(data_dir), destination)}")
 
 
 @app.command()

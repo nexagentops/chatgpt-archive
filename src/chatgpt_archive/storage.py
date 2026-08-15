@@ -8,6 +8,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .index import ArchiveIndex
 from .models import CaptureStatus, Conversation, FailureRecord, Manifest, ManifestEntry
 
 
@@ -19,10 +20,20 @@ class ArchiveStore:
         self.raw_dir = root / "raw"
         self.markdown_dir = root / "markdown"
         self.manifest_path = root / "manifest.json"
+        self.index = ArchiveIndex(root / "archive.db")
 
     def initialize(self) -> None:
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.markdown_dir.mkdir(parents=True, exist_ok=True)
+        self.index.initialize()
+
+    @staticmethod
+    def content_hash(conversation: Conversation) -> str:
+        """Hash canonical content while excluding the volatile capture timestamp."""
+        value = conversation.model_dump(mode="json")
+        value.pop("captured_at", None)
+        encoded = json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
     def _atomic_json(self, path: Path, value: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -57,12 +68,14 @@ class ArchiveStore:
     def save_conversation(self, conversation: Conversation, markdown: str) -> None:
         self.initialize()
         stem = self.filename_stem(conversation.conversation_id)
-        self._atomic_json(self.raw_dir / f"{stem}.json", conversation.model_dump(mode="json"))
+        raw_path = self.raw_dir / f"{stem}.json"
+        self._atomic_json(raw_path, conversation.model_dump(mode="json"))
         target = self.markdown_dir / f"{stem}.md"
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=target.parent, delete=False) as tmp:
             tmp.write(markdown)
             temp_name = tmp.name
         os.replace(temp_name, target)
+        self.index.upsert(conversation, raw_path, target, self.content_hash(conversation))
 
     @staticmethod
     def filename_stem(conversation_id: str) -> str:

@@ -24,12 +24,16 @@ class Attachment(BaseModel):
     name: str | None = None
     url: str | None = None
     content_type: str | None = None
+    available: bool | None = None
+    binary_archived: bool = False
 
 
 class Message(BaseModel):
     model_config = ConfigDict(extra="allow")
     id: str
     parent_id: str | None = None
+    children: list[str] = Field(default_factory=list)
+    branch: str = "current"
     sequence: int
     role: str
     content_type: str = "text"
@@ -42,7 +46,7 @@ class Message(BaseModel):
 
 class Conversation(BaseModel):
     model_config = ConfigDict(extra="allow")
-    schema_version: int = 1
+    schema_version: int = 2
     conversation_id: str
     title: str = "Untitled conversation"
     source_url: str
@@ -50,8 +54,14 @@ class Conversation(BaseModel):
     updated_at: datetime | None = None
     captured_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     capture_status: CaptureCompleteness = CaptureCompleteness.PARTIAL
+    capture_method: str = "dom"
     capture_notes: list[str] = Field(default_factory=lambda: ["current_branch_only", "attachments_unsupported"])
     visible_messages_complete: bool = False
+    conversation_tree_complete: bool = False
+    attachments_complete: bool = False
+    images_complete: bool = False
+    tool_content_complete: bool = False
+    rich_content_complete: bool = False
     richer_branch_data_available: bool = False
     unsupported_content_types: list[str] = Field(default_factory=list)
     messages: list[Message] = Field(default_factory=list)
