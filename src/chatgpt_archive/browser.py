@@ -4,6 +4,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+from urllib.parse import urlparse
 
 
 CHATGPT_HOME = "https://chatgpt.com/"
@@ -36,3 +37,19 @@ def interface_is_authenticated(page: object) -> bool:
         return bool(page.locator("nav, [role='navigation'], main").count())
     except Exception:
         return False
+
+
+class NetworkObserver:
+    """Records only endpoint metadata; bodies, headers, and cookies are never retained."""
+
+    def __init__(self) -> None:
+        self.responses: list[dict[str, object]] = []
+
+    def attach(self, page: object) -> None:
+        page.on("response", self._on_response)
+
+    def _on_response(self, response: object) -> None:
+        parsed = urlparse(response.url)
+        path = parsed.path
+        if "/conversation" in path or "/backend-api/" in path:
+            self.responses.append({"origin": f"{parsed.scheme}://{parsed.netloc}", "path": path, "status": response.status, "content_type": response.headers.get("content-type", "").split(";", 1)[0]})

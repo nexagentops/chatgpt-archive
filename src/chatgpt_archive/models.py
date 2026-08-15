@@ -13,6 +13,12 @@ class CaptureStatus(StrEnum):
     FAILED = "failed"
 
 
+class CaptureCompleteness(StrEnum):
+    FULL = "full"
+    PARTIAL = "partial"
+    FAILED = "failed"
+
+
 class Attachment(BaseModel):
     model_config = ConfigDict(extra="allow")
     name: str | None = None
@@ -43,7 +49,11 @@ class Conversation(BaseModel):
     created_at: datetime | None = None
     updated_at: datetime | None = None
     captured_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    capture_status: CaptureStatus = CaptureStatus.COMPLETED
+    capture_status: CaptureCompleteness = CaptureCompleteness.PARTIAL
+    capture_notes: list[str] = Field(default_factory=lambda: ["current_branch_only", "attachments_unsupported"])
+    visible_messages_complete: bool = False
+    richer_branch_data_available: bool = False
+    unsupported_content_types: list[str] = Field(default_factory=list)
     messages: list[Message] = Field(default_factory=list)
 
 
@@ -54,6 +64,7 @@ class ManifestEntry(BaseModel):
     source_url: str
     status: CaptureStatus = CaptureStatus.PENDING
     error: str | None = None
+    failures: list["FailureRecord"] = Field(default_factory=list)
     discovered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: datetime | None = None
 
@@ -62,3 +73,13 @@ class Manifest(BaseModel):
     schema_version: int = 1
     entries: list[ManifestEntry] = Field(default_factory=list)
     last_synchronization_at: datetime | None = None
+
+
+class FailureRecord(BaseModel):
+    conversation_id: str
+    source_url: str | None = None
+    stage: str
+    category: str
+    message: str
+    occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    debug_artifacts: list[str] = Field(default_factory=list)

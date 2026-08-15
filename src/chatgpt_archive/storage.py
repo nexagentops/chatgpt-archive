@@ -8,7 +8,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import CaptureStatus, Conversation, Manifest, ManifestEntry
+from .models import CaptureStatus, Conversation, FailureRecord, Manifest, ManifestEntry
 
 
 class ArchiveStore:
@@ -81,9 +81,13 @@ class ArchiveStore:
         self.save_manifest(manifest)
 
     def mark_failed(self, conversation_id: str, error: str) -> None:
+        self.record_failure(FailureRecord(conversation_id=conversation_id, stage="unknown", category="unknown", message=error))
+
+    def record_failure(self, failure: FailureRecord) -> None:
         manifest = self.load_manifest()
         for entry in manifest.entries:
-            if entry.conversation_id == conversation_id:
-                entry.status, entry.error = CaptureStatus.FAILED, error[:1000]
+            if entry.conversation_id == failure.conversation_id:
+                entry.status, entry.error = CaptureStatus.FAILED, failure.message[:1000]
+                entry.failures.append(failure)
         manifest.last_synchronization_at = datetime.now(timezone.utc)
         self.save_manifest(manifest)

@@ -43,7 +43,7 @@ def normalize_links(links: list[tuple[str, str]], base_url: str) -> list[Manifes
     return list(found.values())
 
 
-def discover(page: object, max_scrolls: int = 80) -> list[ManifestEntry]:
+def discover(page: object, max_scrolls: int = 80, limit: int | None = None) -> list[ManifestEntry]:
     """Enumerate and scroll the visible history. Re-running safely merges the manifest."""
     seen: dict[str, ManifestEntry] = {}
     for _ in range(max_scrolls):
@@ -55,6 +55,8 @@ def discover(page: object, max_scrolls: int = 80) -> list[ManifestEntry]:
                 pairs.append((item.get_attribute("href") or "", item.inner_text(timeout=1000)))
         for entry in normalize_links(pairs, page.url):
             seen.setdefault(entry.conversation_id, entry)
+        if limit and len(seen) >= limit:
+            return list(seen.values())[:limit]
         container = next((page.locator(item) for item in SELECTORS.sidebar_scroll_container if page.locator(item).count()), None)
         if container is None:
             break
