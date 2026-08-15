@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,7 +44,10 @@ class ArchiveIndex:
                 CREATE TABLE IF NOT EXISTS sync_runs (
                     run_id TEXT PRIMARY KEY, started_at TEXT NOT NULL, ended_at TEXT, result TEXT,
                     discovered INTEGER NOT NULL DEFAULT 0, archived INTEGER NOT NULL DEFAULT 0,
-                    failed INTEGER NOT NULL DEFAULT 0
+                    failed INTEGER NOT NULL DEFAULT 0, target_limit INTEGER, new_count INTEGER NOT NULL DEFAULT 0,
+                    changed_count INTEGER NOT NULL DEFAULT 0, unchanged_count INTEGER NOT NULL DEFAULT 0,
+                    retried INTEGER NOT NULL DEFAULT 0, structured_count INTEGER NOT NULL DEFAULT 0,
+                    dom_count INTEGER NOT NULL DEFAULT 0, peak_rss_mb REAL, elapsed_seconds REAL
                 );
                 CREATE TABLE IF NOT EXISTS capture_errors (
                     id INTEGER PRIMARY KEY, conversation_id TEXT NOT NULL, stage TEXT NOT NULL,
@@ -52,7 +56,24 @@ class ArchiveIndex:
                 CREATE INDEX IF NOT EXISTS idx_conversations_captured ON conversations(last_captured_at);
                 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
             """)
+            existing = {row[1] for row in connection.execute("PRAGMA table_info(sync_runs)")}
+            for name, sql_type in {"target_limit": "INTEGER", "new_count": "INTEGER NOT NULL DEFAULT 0", "changed_count": "INTEGER NOT NULL DEFAULT 0", "unchanged_count": "INTEGER NOT NULL DEFAULT 0", "retried": "INTEGER NOT NULL DEFAULT 0", "structured_count": "INTEGER NOT NULL DEFAULT 0", "dom_count": "INTEGER NOT NULL DEFAULT 0", "peak_rss_mb": "REAL", "elapsed_seconds": "REAL"}.items():
+                if name not in existing:
+                    connection.execute(f"ALTER TABLE sync_runs ADD COLUMN {name} {sql_type}")
             connection.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)", (INDEX_SCHEMA_VERSION, datetime.now(timezone.utc).isoformat()))
+
+    def start_run(self, target_limit: int | None, discovered: int) -> str:
+        self.initialize(); run_id = str(uuid.uuid4())
+        with self.connect() as connection:
+            connection.execute("INSERT INTO sync_runs(run_id, started_at, target_limit, discovered) VALUES (?, ?, ?, ?)", (run_id, datetime.now(timezone.utc).isoformat(), target_limit, discovered))
+        return run_id
+
+    def finish_run(self, run_id: str, result: str, **metrics: int | float) -> None:
+        allowed = {"archived", "failed", "new_count", "changed_count", "unchanged_count", "retried", "structured_count", "dom_count", "peak_rss_mb", "elapsed_seconds"}
+        values = {key: value for key, value in metrics.items() if key in allowed}
+        assignments = ", ".join(["ended_at=?", "result=?"] + [f"{key}=?" for key in values])
+        with self.connect() as connection:
+            connection.execute(f"UPDATE sync_runs SET {assignments} WHERE run_id=?", (datetime.now(timezone.utc).isoformat(), result, *values.values(), run_id))
 
     def upsert(self, conversation: Conversation, json_path: Path, markdown_path: Path, content_hash: str) -> None:
         self.initialize()
@@ -87,6 +108,11 @@ class ArchiveIndex:
         self.initialize()
         with self.connect() as connection:
             return connection.execute("SELECT * FROM conversations WHERE conversation_id=?", (conversation_id,)).fetchone()
+
+    def latest_run(self) -> sqlite3.Row | None:
+        self.initialize()
+        with self.connect() as connection:
+            return connection.execute("SELECT * FROM sync_runs ORDER BY started_at DESC LIMIT 1").fetchone()
 
 
 def _iso(value: datetime | None) -> str | None:

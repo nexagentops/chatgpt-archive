@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 import time
+import resource
 
 import typer
 
@@ -84,6 +85,9 @@ def sync(
             raise typer.BadParameter("Conversation ID is not pending in this manifest.", param_hint="--conversation")
     if limit:
         pending = pending[:limit]
+    run_id = store.index.start_run(limit, len(manifest.entries))
+    started = time.monotonic()
+    metrics = {"archived": 0, "failed": 0, "new_count": 0, "changed_count": 0, "unchanged_count": 0, "retried": 0, "structured_count": 0, "dom_count": 0}
     with authenticated_page(profile, headless=not cdp_url, cdp_url=cdp_url) as page:
         if not interface_is_authenticated(page):
             page.goto(CHATGPT_HOME, wait_until="domcontentloaded")
@@ -97,20 +101,33 @@ def sync(
                         typer.echo(f"syncing={entry.conversation_id} attempt={attempt}")
                     captured = acquirer.fetch(entry.source_url, entry.conversation_id, entry.title)
                     existing = store.index.get(entry.conversation_id)
-                    if existing is None or existing["content_hash"] != store.content_hash(captured):
+                    content_hash = store.content_hash(captured)
+                    if existing is None:
+                        metrics["new_count"] += 1
+                    elif existing["content_hash"] == content_hash:
+                        metrics["unchanged_count"] += 1
+                    else:
+                        metrics["changed_count"] += 1
+                    if existing is None or existing["content_hash"] != content_hash:
                         store.save_conversation(captured, render_conversation(captured))
+                        metrics["archived"] += 1
+                    metrics["structured_count" if captured.capture_method == "structured_browser_response" else "dom_count"] += 1
                     store.mark_complete(entry.conversation_id)
                     break
                 except Exception as exc:
                     if attempt < max_attempts and type(exc).__name__ in {"RuntimeError", "TimeoutError"}:
-                        time.sleep(min(2 ** (attempt - 1), 4)); continue
+                        metrics["retried"] += 1; time.sleep(min(2 ** (attempt - 1), 4)); continue
                     artifacts = capture_failure_artifacts(page, debug_dir, entry.conversation_id) if debug_dir else []
                     store.record_failure(FailureRecord(
                         conversation_id=entry.conversation_id, source_url=entry.source_url, stage="sync",
                         category=type(exc).__name__, message=str(exc), debug_artifacts=artifacts,
                     ))
                     typer.echo(f"Failed {entry.conversation_id}: {type(exc).__name__}", err=True)
+                    metrics["failed"] += 1
                     break
+    metrics["peak_rss_mb"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+    metrics["elapsed_seconds"] = time.monotonic() - started
+    store.index.finish_run(run_id, "completed" if not metrics["failed"] else "completed_with_failures", **metrics)
     status(data_dir)
 
 
@@ -157,6 +174,8 @@ def stats(data_dir: Path = typer.Option(Path("data"))) -> None:
     store = ArchiveStore(data_dir)
     totals = store.index.totals()
     typer.echo(f"conversations={totals['conversations']} messages={totals['messages']}")
+    if run := store.index.latest_run():
+        typer.echo(f"last_run={run['result']} archived={run['archived']} failed={run['failed']} structured={run['structured_count']} dom={run['dom_count']} peak_rss_mb={run['peak_rss_mb']}")
 
 
 @app.command()
