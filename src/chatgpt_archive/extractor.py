@@ -18,15 +18,22 @@ MESSAGE_SELECTORS = (
 )
 
 
-def extract_visible_conversation(page: object, conversation_id: str, title: str, source_url: str) -> Conversation:
-    page.goto(source_url, wait_until="domcontentloaded")
-    page.wait_for_timeout(800)  # allow streamed UI to settle; no network interception
-    locator = None
+def wait_for_message_locator(page: object, timeout_ms: int = 5000) -> object | None:
+    """Wait for hydrated turns rather than assuming document readiness is sufficient."""
     for selector in MESSAGE_SELECTORS:
         candidate = page.locator(selector)
+        try:
+            candidate.first.wait_for(state="attached", timeout=timeout_ms)
+        except Exception:
+            continue
         if candidate.count():
-            locator = candidate
-            break
+            return candidate
+    return None
+
+
+def extract_visible_conversation(page: object, conversation_id: str, title: str, source_url: str) -> Conversation:
+    page.goto(source_url, wait_until="domcontentloaded")
+    locator = wait_for_message_locator(page)
     if locator is None:
         raise RuntimeError("No visible message elements found; ChatGPT DOM may have changed.")
     turns = []

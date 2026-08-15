@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from chatgpt_archive.markdown import render_conversation
 from chatgpt_archive.models import Conversation, Message
 from chatgpt_archive.normalizer import normalize_visible_turns
+from chatgpt_archive.extractor import MESSAGE_SELECTORS
 
 
 def test_unknown_model_fields_are_retained_and_optional_fields_default() -> None:
@@ -25,3 +26,7 @@ def test_markdown_preserves_multiline_fenced_code() -> None:
 def test_normalizer_keeps_partial_turns_and_skips_empty_malformed_ones() -> None:
     messages = normalize_visible_turns("abc", [{"role": "user", "text": "hi"}, {"role": "assistant"}, {"text": "partial"}])
     assert [(message.sequence, message.role, message.text) for message in messages] == [(0, "user", "hi"), (1, "unknown", "partial")]
+
+
+def test_extractor_prioritizes_message_role_attribute() -> None:
+    assert MESSAGE_SELECTORS[0] == "[data-message-author-role]"

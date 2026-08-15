@@ -46,6 +46,9 @@ def normalize_links(links: list[tuple[str, str]], base_url: str) -> list[Manifes
 def discover(page: object, max_scrolls: int = 80, limit: int | None = None) -> list[ManifestEntry]:
     """Enumerate and scroll the visible history. Re-running safely merges the manifest."""
     seen: dict[str, ManifestEntry] = {}
+    # ChatGPT renders the sidebar after initial document readiness. A bounded wait
+    # avoids treating an authenticated but not-yet-hydrated sidebar as empty.
+    page.wait_for_timeout(750)
     for _ in range(max_scrolls):
         pairs: list[tuple[str, str]] = []
         for selector in SELECTORS.conversation_links:
