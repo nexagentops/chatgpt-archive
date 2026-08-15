@@ -2,7 +2,7 @@ from pathlib import Path
 
 from chatgpt_archive.markdown import render_conversation
 from chatgpt_archive.models import Conversation, ManifestEntry, Message
-from chatgpt_archive.operations import backup, export_csv, migrate, reindex, verify
+from chatgpt_archive.operations import backup, export_csv, migrate, reindex, render_markdown, verify
 from chatgpt_archive.storage import ArchiveStore
 from chatgpt_archive.models import FailureRecord
 
@@ -64,10 +64,47 @@ def test_sync_run_metrics_are_persisted(tmp_path: Path) -> None:
     store.index.finish_run(
         run_id, "completed", archived=3, structured_count=2, dom_count=1,
         peak_rss_mb=12.5, starting_rss_mb=10.0, ending_rss_mb=11.0,
+        longest_capture_seconds=2.5, structured_failures=1, dom_failures=0,
     )
     with store.index.connect() as connection:
         row = connection.execute("SELECT * FROM sync_runs WHERE run_id=?", (run_id,)).fetchone()
     assert (row["archived"], row["structured_count"], row["dom_count"], row["peak_rss_mb"]) == (3, 2, 1, 12.5)
+    assert (row["longest_capture_seconds"], row["structured_failures"], row["dom_failures"]) == (2.5, 1, 0)
+
+
+def test_complete_remote_reconciliation_retains_missing_archive(tmp_path: Path) -> None:
+    store = ArchiveStore(tmp_path / "archive")
+    first = conversation(); second = conversation(); second.conversation_id = "synthetic-other"
+    second.source_url = "https://chatgpt.com/c/synthetic-other"
+    for item in (first, second):
+        store.save_conversation(item, render_conversation(item))
+    statuses = store.index.reconcile_remote_presence({first.conversation_id}, history_complete=True)
+    assert statuses == {"remote_missing": 1, "remote_present": 1}
+    assert (store.raw_dir / f"{store.filename_stem(second.conversation_id)}.json").exists()
+
+
+def test_render_markdown_regenerates_only_derived_files(tmp_path: Path) -> None:
+    store = ArchiveStore(tmp_path / "archive")
+    item = conversation(); item.messages[0].text = "preserve\n"
+    store.save_conversation(item, "stale")
+    assert render_markdown(store) == 1
+    assert "preserve\n" in (store.markdown_dir / f"{store.filename_stem(item.conversation_id)}.md").read_text()
+
+
+def test_verify_checks_existing_csv_exports(tmp_path: Path) -> None:
+    store = ArchiveStore(tmp_path / "archive")
+    item = conversation(); store.save_conversation(item, render_conversation(item))
+    export_csv(store)
+    assert verify(store)["errors"] == 0
+    exports = store.root / "exports" / "messages.csv"
+    exports.write_text(exports.read_text().replace("reply", "changed", 1), encoding="utf-8")
+    assert verify(store)["csv_messages"] == 1
+
+
+def test_incomplete_remote_reconciliation_does_not_mark_missing(tmp_path: Path) -> None:
+    store = ArchiveStore(tmp_path / "archive")
+    item = conversation(); store.save_conversation(item, render_conversation(item))
+    assert store.index.reconcile_remote_presence(set(), history_complete=False) == {"remote_present": 1}
 
 
 def test_failed_changed_candidate_preserves_previous_good_archive(tmp_path: Path) -> None:

@@ -23,6 +23,19 @@ def test_markdown_preserves_multiline_fenced_code() -> None:
     assert "```python\nprint(1)\n```" in output
 
 
+def test_markdown_preserves_trailing_code_newline_and_excludes_alternate_branch() -> None:
+    conversation = Conversation(
+        conversation_id="abc", title="Code", source_url="https://chatgpt.com/c/abc",
+        messages=[
+            Message(id="current", sequence=0, role="assistant", text="```python\nprint(1)\n```\n"),
+            Message(id="alternate", sequence=1, role="assistant", branch="alternate", text="alternate only"),
+        ],
+    )
+    output = render_conversation(conversation)
+    assert "```python\nprint(1)\n```\n\n" in output
+    assert "alternate only" not in output
+
+
 def test_normalizer_keeps_partial_turns_and_skips_empty_malformed_ones() -> None:
     messages = normalize_visible_turns("abc", [{"role": "user", "text": "hi"}, {"role": "assistant"}, {"text": "partial"}])
     assert [(message.sequence, message.role, message.text) for message in messages] == [(0, "user", "hi"), (1, "unknown", "partial")]
