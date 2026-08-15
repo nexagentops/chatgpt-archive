@@ -10,6 +10,7 @@ import subprocess
 
 import typer
 
+from . import __version__
 from .browser import CHATGPT_HOME, NetworkObserver, authenticated_page, interface_is_authenticated
 from .diagnostics import capture_failure_artifacts
 from .discovery import discover_with_metadata
@@ -20,6 +21,19 @@ from .storage import ArchiveStore
 from .operations import backup as create_backup, export_csv, migrate as migrate_archive, reindex, render_markdown, verify as verify_archive
 
 app = typer.Typer(help="Local-first archival for conversations owned by the authenticated ChatGPT user.")
+
+
+def _show_version(value: bool) -> None:
+    if value:
+        typer.echo(__version__)
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(False, "--version", callback=_show_version, is_eager=True, help="Show package version."),
+) -> None:
+    """Archive conversations from an authenticated local browser session."""
 
 
 def _rss_mb() -> float | None:
