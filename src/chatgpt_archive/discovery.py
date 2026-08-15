@@ -16,8 +16,8 @@ class Selectors:
         "a[href*='/c/']",
     )
     sidebar_scroll_container: tuple[str, ...] = (
-        "nav[aria-label]",
-        "nav",
+        "nav[aria-label='Sidebar']",
+        "nav[aria-label*='Sidebar' i]",
         "aside",
     )
 
@@ -57,7 +57,7 @@ def discover(page: object, max_scrolls: int = 80, limit: int | None = None) -> l
             seen.setdefault(entry.conversation_id, entry)
         if limit and len(seen) >= limit:
             return list(seen.values())[:limit]
-        container = next((page.locator(item) for item in SELECTORS.sidebar_scroll_container if page.locator(item).count()), None)
+        container = next((page.locator(item).first for item in SELECTORS.sidebar_scroll_container if page.locator(item).count()), None)
         if container is None:
             break
         before = container.evaluate("element => element.scrollHeight - element.scrollTop")

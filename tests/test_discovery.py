@@ -1,4 +1,4 @@
-from chatgpt_archive.discovery import conversation_id_from_url, normalize_links
+from chatgpt_archive.discovery import SELECTORS, conversation_id_from_url, normalize_links
 
 
 def test_duplicate_links_become_one_manifest_entry() -> None:
@@ -17,3 +17,8 @@ def test_non_conversation_urls_are_ignored() -> None:
 def test_normalized_entries_can_be_bounded() -> None:
     entries = normalize_links([(f"/c/{index}", str(index)) for index in range(3)], "https://chatgpt.com/")
     assert [entry.conversation_id for entry in entries[:2]] == ["0", "1"]
+
+
+def test_sidebar_selector_excludes_attachment_navigation() -> None:
+    assert "nav[aria-label='Sidebar']" in SELECTORS.sidebar_scroll_container
+    assert "nav[aria-label]" not in SELECTORS.sidebar_scroll_container

@@ -51,7 +51,9 @@ def interface_is_authenticated(page: object) -> bool:
     if "chatgpt.com" not in url or "/auth/" in url:
         return False
     try:
-        return bool(page.locator("nav, [role='navigation'], main").count())
+        if page.locator("a[href*='/auth/login'], input[type='password']").count():
+            return False
+        return bool(page.locator("nav[aria-label='Sidebar'], main").count())
     except Exception:
         return False
 
