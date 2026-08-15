@@ -61,7 +61,10 @@ def test_explicit_v1_to_v2_migration_is_idempotent(tmp_path: Path) -> None:
 def test_sync_run_metrics_are_persisted(tmp_path: Path) -> None:
     store = ArchiveStore(tmp_path / "archive")
     run_id = store.index.start_run(10, 4)
-    store.index.finish_run(run_id, "completed", archived=3, structured_count=2, dom_count=1, peak_rss_mb=12.5)
+    store.index.finish_run(
+        run_id, "completed", archived=3, structured_count=2, dom_count=1,
+        peak_rss_mb=12.5, starting_rss_mb=10.0, ending_rss_mb=11.0,
+    )
     with store.index.connect() as connection:
         row = connection.execute("SELECT * FROM sync_runs WHERE run_id=?", (run_id,)).fetchone()
     assert (row["archived"], row["structured_count"], row["dom_count"], row["peak_rss_mb"]) == (3, 2, 1, 12.5)
