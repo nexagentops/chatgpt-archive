@@ -4,7 +4,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Protocol
 
-from .models import Conversation, Message
+from .models import Conversation
+from .normalizer import normalize_visible_turns
 
 
 class ConversationAcquirer(Protocol):
@@ -28,14 +29,15 @@ def extract_visible_conversation(page: object, conversation_id: str, title: str,
             break
     if locator is None:
         raise RuntimeError("No visible message elements found; ChatGPT DOM may have changed.")
-    messages: list[Message] = []
+    turns = []
     for sequence in range(locator.count()):
         turn = locator.nth(sequence)
         role = turn.get_attribute("data-message-author-role") or "unknown"
         text = turn.inner_text(timeout=2000).strip()
         if not text:
             continue
-        messages.append(Message(id=f"{conversation_id}:{sequence}", sequence=len(messages), role=role, text=text))
+        turns.append({"id": f"{conversation_id}:{sequence}", "role": role, "text": text})
+    messages = normalize_visible_turns(conversation_id, turns)
     if not messages:
         raise RuntimeError("Conversation contained no extractable visible text.")
     return Conversation(conversation_id=conversation_id, title=title, source_url=source_url, captured_at=datetime.now(timezone.utc), messages=messages)

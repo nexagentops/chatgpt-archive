@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
+import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,13 +56,20 @@ class ArchiveStore:
 
     def save_conversation(self, conversation: Conversation, markdown: str) -> None:
         self.initialize()
-        stem = conversation.conversation_id
+        stem = self.filename_stem(conversation.conversation_id)
         self._atomic_json(self.raw_dir / f"{stem}.json", conversation.model_dump(mode="json"))
         target = self.markdown_dir / f"{stem}.md"
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=target.parent, delete=False) as tmp:
             tmp.write(markdown)
             temp_name = tmp.name
         os.replace(temp_name, target)
+
+    @staticmethod
+    def filename_stem(conversation_id: str) -> str:
+        """Keep IDs recognizable while preventing URL-derived path traversal."""
+        visible = re.sub(r"[^A-Za-z0-9._-]+", "-", conversation_id).strip(".-")[:96] or "conversation"
+        suffix = hashlib.sha256(conversation_id.encode("utf-8")).hexdigest()[:12]
+        return f"{visible}-{suffix}"
 
     def mark_complete(self, conversation_id: str) -> None:
         manifest = self.load_manifest()
