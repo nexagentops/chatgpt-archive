@@ -33,9 +33,12 @@ chatgpt-archive export-csv
 chatgpt-archive stats
 chatgpt-archive doctor --cdp-url http://127.0.0.1:9222
 chatgpt-archive backup /safe/empty/destination
+chatgpt-archive migrate
 ```
 
 `login` opens a persistent Chromium profile for manual sign-in only. `discover` scans the visible history sidebar, scrolls it, deduplicates `/c/<id>` links, and checkpoint-merges them into `data/manifest.json`. `sync` processes all entries that are not completed, writes JSON first and Markdown second using atomic replacement, then marks each entry completed. Failed items retain a structured error and will be retried by a later sync; a failure does not stop subsequent entries.
+
+Use `sync --refresh` to safely recapture completed entries: an unchanged canonical hash preserves the existing archive, while a validated changed candidate replaces it atomically. Temporary browser failures have bounded retries; authentication failures remain fail-closed. `migrate` is explicit and atomically upgrades supported canonical v1 records to v2 before rebuilding the index.
 
 For bounded validation, use `discover --limit 25`, `sync --limit 25`, or `sync --conversation <id>`. `inspect <id>` reports only visible-turn counts and sanitized relevant response endpoint metadata; it does not print conversation text, headers, or browser storage. `--debug-dir debug` on `sync` is opt-in and saves screenshot/HTML failure artifacts locally. Those artifacts can contain conversation content and are Git-ignored; debugging is off by default.
 

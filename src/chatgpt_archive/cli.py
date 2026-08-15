@@ -13,7 +13,7 @@ from .extractor import PlaywrightAcquirer
 from .markdown import render_conversation
 from .models import CaptureStatus, FailureRecord
 from .storage import ArchiveStore
-from .operations import backup as create_backup, export_csv, reindex, verify as verify_archive
+from .operations import backup as create_backup, export_csv, migrate as migrate_archive, reindex, verify as verify_archive
 
 app = typer.Typer(help="Local-first archival for conversations owned by the authenticated ChatGPT user.")
 
@@ -71,11 +71,13 @@ def sync(
     debug_dir: Path | None = typer.Option(None, help="Opt-in ignored directory for failed-page screenshot and HTML."),
     verbose: bool = typer.Option(False, help="Print non-sensitive per-conversation progress."),
     cdp_url: str | None = typer.Option(None, help="Optional loopback Chrome Beta CDP endpoint; never a profile path."),
+    refresh: bool = typer.Option(False, help="Recapture completed entries; unchanged hashes are not rewritten."),
+    max_attempts: int = typer.Option(3, min=1, max=5, help="Bounded attempts for temporary browser failures."),
 ) -> None:
     """Archive pending/failed entries, continuing after individual failures."""
     store, profile = paths(data_dir, profile_dir)
     manifest = store.load_manifest()
-    pending = [entry for entry in manifest.entries if entry.status != CaptureStatus.COMPLETED]
+    pending = list(manifest.entries) if refresh else [entry for entry in manifest.entries if entry.status != CaptureStatus.COMPLETED]
     if conversation:
         pending = [entry for entry in pending if entry.conversation_id == conversation]
         if not pending:
@@ -89,19 +91,26 @@ def sync(
             raise typer.Exit("Not authenticated. Run `chatgpt-archive login` first.")
         acquirer = PlaywrightAcquirer(page)
         for entry in pending:
-            try:
-                if verbose:
-                    typer.echo(f"syncing={entry.conversation_id}")
-                conversation = acquirer.fetch(entry.source_url, entry.conversation_id, entry.title)
-                store.save_conversation(conversation, render_conversation(conversation))
-                store.mark_complete(entry.conversation_id)
-            except Exception as exc:
-                artifacts = capture_failure_artifacts(page, debug_dir, entry.conversation_id) if debug_dir else []
-                store.record_failure(FailureRecord(
-                    conversation_id=entry.conversation_id, source_url=entry.source_url, stage="sync",
-                    category=type(exc).__name__, message=str(exc), debug_artifacts=artifacts,
-                ))
-                typer.echo(f"Failed {entry.conversation_id}: {type(exc).__name__}", err=True)
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    if verbose:
+                        typer.echo(f"syncing={entry.conversation_id} attempt={attempt}")
+                    captured = acquirer.fetch(entry.source_url, entry.conversation_id, entry.title)
+                    existing = store.index.get(entry.conversation_id)
+                    if existing is None or existing["content_hash"] != store.content_hash(captured):
+                        store.save_conversation(captured, render_conversation(captured))
+                    store.mark_complete(entry.conversation_id)
+                    break
+                except Exception as exc:
+                    if attempt < max_attempts and type(exc).__name__ in {"RuntimeError", "TimeoutError"}:
+                        time.sleep(min(2 ** (attempt - 1), 4)); continue
+                    artifacts = capture_failure_artifacts(page, debug_dir, entry.conversation_id) if debug_dir else []
+                    store.record_failure(FailureRecord(
+                        conversation_id=entry.conversation_id, source_url=entry.source_url, stage="sync",
+                        category=type(exc).__name__, message=str(exc), debug_artifacts=artifacts,
+                    ))
+                    typer.echo(f"Failed {entry.conversation_id}: {type(exc).__name__}", err=True)
+                    break
     status(data_dir)
 
 
@@ -118,6 +127,12 @@ def status(data_dir: Path = typer.Option(Path("data"))) -> None:
 def reindex_command(data_dir: Path = typer.Option(Path("data"))) -> None:
     """Rebuild the SQLite operational index from canonical JSON without altering archives."""
     typer.echo(f"indexed={reindex(ArchiveStore(data_dir))}")
+
+
+@app.command()
+def migrate(data_dir: Path = typer.Option(Path("data"))) -> None:
+    """Explicitly migrate canonical archive files to the supported schema version."""
+    typer.echo(f"migrated={migrate_archive(ArchiveStore(data_dir))}")
 
 
 @app.command(name="export-csv")

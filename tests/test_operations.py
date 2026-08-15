@@ -2,7 +2,7 @@ from pathlib import Path
 
 from chatgpt_archive.markdown import render_conversation
 from chatgpt_archive.models import Conversation, Message
-from chatgpt_archive.operations import backup, export_csv, reindex, verify
+from chatgpt_archive.operations import backup, export_csv, migrate, reindex, verify
 from chatgpt_archive.storage import ArchiveStore
 
 
@@ -46,3 +46,12 @@ def test_backup_excludes_browser_state_and_preserves_archive(tmp_path: Path) -> 
     target = backup(store, tmp_path / "backup")
     assert (target / "raw").exists() and (target / "archive.db").exists()
     assert not (target / ".playwright-profile").exists()
+
+
+def test_explicit_v1_to_v2_migration_is_idempotent(tmp_path: Path) -> None:
+    store = ArchiveStore(tmp_path / "archive")
+    item = conversation(); item.schema_version = 1
+    store.save_conversation(item, render_conversation(item))
+    assert migrate(store) == 1
+    assert migrate(store) == 0
+    assert next(iter(__import__("chatgpt_archive.operations", fromlist=["conversations"]).conversations(store)))[1].schema_version == 2

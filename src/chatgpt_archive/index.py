@@ -83,6 +83,11 @@ class ArchiveIndex:
         with self.connect() as connection:
             return connection.execute("SELECT * FROM conversations ORDER BY conversation_id").fetchall()
 
+    def get(self, conversation_id: str) -> sqlite3.Row | None:
+        self.initialize()
+        with self.connect() as connection:
+            return connection.execute("SELECT * FROM conversations WHERE conversation_id=?", (conversation_id,)).fetchone()
+
 
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
