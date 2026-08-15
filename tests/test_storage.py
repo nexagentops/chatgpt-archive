@@ -1,7 +1,7 @@
 import json
 
 from chatgpt_archive.markdown import render_conversation
-from chatgpt_archive.models import CaptureStatus, Conversation, ManifestEntry, Message
+from chatgpt_archive.models import CaptureCompleteness, CaptureStatus, Conversation, FailureRecord, ManifestEntry, Message
 from chatgpt_archive.storage import ArchiveStore
 
 
@@ -32,6 +32,20 @@ def test_failed_entry_remains_resumable(tmp_path) -> None:
     entry = store.load_manifest().entries[0]
     assert entry.status == CaptureStatus.FAILED
     assert entry.error == "synthetic failure"
+
+
+def test_failure_record_is_structured_and_persisted(tmp_path) -> None:
+    store = ArchiveStore(tmp_path / "data")
+    store.merge_discovery([ManifestEntry(conversation_id="a", source_url="https://chatgpt.com/c/a")])
+    store.record_failure(FailureRecord(conversation_id="a", source_url="https://chatgpt.com/c/a", stage="extract", category="TimeoutError", message="synthetic timeout"))
+    failure = store.load_manifest().entries[0].failures[0]
+    assert (failure.conversation_id, failure.stage, failure.category) == ("a", "extract", "TimeoutError")
+
+
+def test_capture_completeness_is_explicit() -> None:
+    conversation = Conversation(conversation_id="a", source_url="https://chatgpt.com/c/a")
+    assert conversation.capture_status == CaptureCompleteness.PARTIAL
+    assert "current_branch_only" in conversation.capture_notes
 
 
 def test_filename_is_deterministic_and_cannot_escape_archive() -> None:
