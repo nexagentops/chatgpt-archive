@@ -11,7 +11,7 @@ import subprocess
 import typer
 
 from . import __version__
-from .browser import CHATGPT_HOME, NetworkObserver, authenticated_page, interface_is_authenticated
+from .browser import DEFAULT_PROFILE_DIR, CHATGPT_HOME, NetworkObserver, authenticated_page, interface_is_authenticated
 from .diagnostics import capture_failure_artifacts
 from .discovery import discover_with_metadata
 from .extractor import PlaywrightAcquirer
@@ -51,10 +51,11 @@ def paths(data_dir: Path, profile_dir: Path) -> tuple[ArchiveStore, Path]:
 
 @app.command()
 def login(
-    profile_dir: Path = typer.Option(Path(".playwright-profile"), help="Ignored persistent Playwright profile"),
+    profile_dir: Path = typer.Option(DEFAULT_PROFILE_DIR, help="Persistent browser profile outside the repository by default"),
     timeout_seconds: int = typer.Option(600, min=10, help="How long to wait for manual browser sign-in."),
 ) -> None:
     """Open ChatGPT for manual sign-in. Credentials are never requested or read."""
+    typer.echo(f"Using browser profile: {profile_dir}")
     with authenticated_page(profile_dir) as page:
         page.goto(CHATGPT_HOME, wait_until="domcontentloaded")
         typer.echo("Complete sign-in in Chromium. The command detects the ChatGPT interface automatically.")
@@ -71,7 +72,7 @@ def login(
 @app.command(name="discover")
 def discover_command(
     data_dir: Path = typer.Option(Path("data")),
-    profile_dir: Path = typer.Option(Path(".playwright-profile")),
+    profile_dir: Path = typer.Option(DEFAULT_PROFILE_DIR, help="Persistent browser profile outside the repository by default"),
     limit: int | None = typer.Option(None, min=1, help="Stop after this many unique conversations."),
     verbose: bool = typer.Option(False, help="Print non-sensitive discovery counts."),
     cdp_url: str | None = typer.Option(None, help="Optional loopback Chrome Beta CDP endpoint; never a profile path."),
@@ -112,7 +113,7 @@ def discover_command(
 @app.command(name="sync")
 def sync(
     data_dir: Path = typer.Option(Path("data")),
-    profile_dir: Path = typer.Option(Path(".playwright-profile")),
+    profile_dir: Path = typer.Option(DEFAULT_PROFILE_DIR, help="Persistent browser profile outside the repository by default"),
     limit: int | None = typer.Option(None, min=1, help="Archive at most this many entries."),
     conversation: str | None = typer.Option(None, help="Archive one discovered conversation ID."),
     debug_dir: Path | None = typer.Option(None, help="Opt-in ignored directory for failed-page screenshot and HTML."),
@@ -248,7 +249,7 @@ def doctor(
     result = {"archive_writable": store.root.exists(), "sqlite": store.index.path.exists(), "cdp": "not_checked"}
     if cdp_url:
         try:
-            with authenticated_page(Path(".playwright-profile"), cdp_url=cdp_url) as page:
+            with authenticated_page(DEFAULT_PROFILE_DIR, cdp_url=cdp_url) as page:
                 result["cdp"] = "connected"; result["chatgpt_authenticated"] = interface_is_authenticated(page)
         except Exception:
             result["cdp"] = "unavailable"
@@ -265,7 +266,7 @@ def backup(destination: Path, data_dir: Path = typer.Option(Path("data"))) -> No
 def inspect(
     conversation_id: str,
     data_dir: Path = typer.Option(Path("data")),
-    profile_dir: Path = typer.Option(Path(".playwright-profile")),
+    profile_dir: Path = typer.Option(DEFAULT_PROFILE_DIR, help="Persistent browser profile outside the repository by default"),
     cdp_url: str | None = typer.Option(None, help="Optional loopback Chrome Beta CDP endpoint; never a profile path."),
 ) -> None:
     """Inspect one discovered conversation's browser workflow without printing content."""

@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import ipaddress
+import os
 from pathlib import Path
+import socket
+import sys
 from typing import Iterator
 from urllib.parse import urlparse
 
@@ -10,10 +14,34 @@ from urllib.parse import urlparse
 CHATGPT_HOME = "https://chatgpt.com/"
 
 
+def default_profile_dir() -> Path:
+    """Return a user-local persistent profile location outside the checkout."""
+    if sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        configured = os.environ.get("XDG_STATE_HOME")
+        base = Path(configured) if configured and Path(configured).is_absolute() else Path.home() / ".local" / "state"
+    return base / "chatgpt-archive" / "browser-profile"
+
+
+DEFAULT_PROFILE_DIR = default_profile_dir()
+
+
+def _localhost_resolves_to_loopback() -> bool:
+    """Fail closed if the local hostname does not resolve exclusively to loopback."""
+    try:
+        addresses = {item[4][0] for item in socket.getaddrinfo("localhost", None, type=socket.SOCK_STREAM)}
+        return bool(addresses) and all(ipaddress.ip_address(address).is_loopback for address in addresses)
+    except (OSError, ValueError):
+        return False
+
+
 def validate_cdp_url(cdp_url: str) -> str:
     """Permit only local debugger connections; CDP URLs never carry credentials."""
     parsed = urlparse(cdp_url)
-    if parsed.scheme not in {"http", "ws"} or parsed.hostname not in {"127.0.0.1", "localhost", "::1"} or parsed.username or parsed.password:
+    hostname = parsed.hostname
+    is_loopback = hostname in {"127.0.0.1", "::1"} or (hostname == "localhost" and _localhost_resolves_to_loopback())
+    if parsed.scheme not in {"http", "ws"} or not is_loopback or parsed.username or parsed.password:
         raise ValueError("CDP URL must be an unauthenticated loopback http:// or ws:// URL.")
     return cdp_url
 

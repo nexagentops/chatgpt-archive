@@ -77,10 +77,15 @@ chatgpt-archive sync --cdp-url http://127.0.0.1:9222
 ```
 
 The endpoint must be an unauthenticated loopback URL. The CLI refuses remote
-or credential-bearing CDP URLs, disconnects without closing the browser, and
-never automates a login. Keep the browser profile outside the repository.
-`login` is available only for a separate persistent local profile and waits for
-manual sign-in; it never handles credentials.
+or credential-bearing CDP URLs, verifies that `localhost` resolves only to
+loopback, disconnects without closing the browser, and never automates a login.
+By default, persistent browser state is stored outside the repository: macOS
+uses `~/Library/Application Support/chatgpt-archive/browser-profile`; other
+Unix environments use `$XDG_STATE_HOME/chatgpt-archive/browser-profile` or
+`~/.local/state/chatgpt-archive/browser-profile`. `login` prints the resolved
+path and waits for manual sign-in; it never handles credentials. Existing users
+who deliberately need their old local checkout profile can continue to pass
+`--profile-dir .playwright-profile` explicitly.
 
 ## Discovery and sync
 
@@ -150,13 +155,19 @@ intended for archival of conversations belonging to the authenticated user.
 Keep CDP/debugging localhost-only. See [SECURITY.md](SECURITY.md) for the full
 security and privacy model.
 
+When choosing `--data-dir`, `--debug-dir`, or `--profile-dir`, prefer a
+location outside a Git checkout. The repository ignores known local runtime
+locations—including archive, export, profile, session, debug, database, log,
+and environment-file patterns—but Git ignore rules are a safeguard, not a
+publication boundary. Never force-add those artifacts; check a custom path with
+`git check-ignore -v <path>` before staging it.
+
 ## Tested scale
 
 The architecture uses incremental, bounded processing and is designed for
-large archives. Full live validation was performed against the complete
-accessible account during validation, which contained 28 remote conversations.
-This project has **not** been empirically live-tested against 1,000
-conversations.
+large archives. Full live validation was performed against a complete
+real-world accessible account archive. This project has **not** been empirically
+live-tested against 1,000 conversations.
 
 If authentication expires, the CLI fails closed. Reauthenticate manually in
 the isolated browser, then rerun discovery or sync; completed IDs and atomic
@@ -173,6 +184,7 @@ data/
   archive.db           # operational index
 ```
 
-`data/`, `.playwright-profile/`, and `debug/` are Git-ignored. Never commit
-real conversations, debug artifacts, browser profiles, or authentication
-material.
+Known runtime locations such as `data/`, archive/export directories,
+browser/session state, `.playwright-profile/`, and `debug/` are Git-ignored.
+Never commit real conversations, debug artifacts, browser profiles,
+authentication material, local databases, logs, or environment files.
