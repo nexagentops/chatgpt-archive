@@ -5,6 +5,55 @@ currently authenticated ChatGPT user. Authentication remains entirely in a
 browser profile; the archive tool never asks for, copies, prints, or exports
 passwords, cookies, tokens, headers, or browser storage.
 
+## Install
+
+Requires Python 3.12 or newer. Playwright is a runtime dependency; browser
+binaries are required only for browser-backed commands.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install .
+chatgpt-archive --help
+```
+
+For development, install deterministic test and lint tools with:
+
+```bash
+pip install -e '.[dev]'
+```
+
+Runtime dependencies are Pydantic (schema validation), Typer (CLI), and
+Playwright (browser attachment). Development dependencies are pytest and Ruff.
+
+## Deterministic quality gates
+
+The automated suite uses synthetic fixtures and does not require a ChatGPT
+account, browser profile, or credentials. Run:
+
+```bash
+ruff check .
+pytest
+python -m compileall -q src
+```
+
+GitHub Actions runs these deterministic checks on Python 3.12 and 3.13. Live
+account validation remains opt-in/manual and is never run in CI. Mypy is not
+configured for v1.0; adding useful static typing coverage is a future
+engineering improvement rather than a release gate.
+
+## Architecture
+
+```text
+isolated authenticated browser
+→ structured history discovery
+→ structured conversation acquisition / DOM fallback
+→ canonical JSON
+→ SQLite operational index
+→ Markdown / CSV derived exports
+```
+
 ## Archive contract
 
 - **JSON** is the canonical, portable archive representation.
@@ -89,6 +138,25 @@ message ordering and parents, hashes, Markdown linkage, SQLite consistency,
 and existing CSV exports. `backup` copies archive material only—never browser
 profiles—and can be verified after restore into a clean directory. `migrate`
 is explicit and only supports known canonical schema transitions.
+
+## Privacy and responsible use
+
+Archive contents, debug artifacts, and browser profiles are sensitive. Keep
+them local and outside Git. Browser profiles are excluded from backups by
+default. The tool has no telemetry, does not send content to an external LLM or
+API, and does not automatically delete or modify ChatGPT conversations. It is
+intended for archival of conversations belonging to the authenticated user.
+
+Keep CDP/debugging localhost-only. See [SECURITY.md](SECURITY.md) for the full
+security and privacy model.
+
+## Tested scale
+
+The architecture uses incremental, bounded processing and is designed for
+large archives. Full live validation was performed against the complete
+accessible account during validation, which contained 28 remote conversations.
+This project has **not** been empirically live-tested against 1,000
+conversations.
 
 If authentication expires, the CLI fails closed. Reauthenticate manually in
 the isolated browser, then rerun discovery or sync; completed IDs and atomic
