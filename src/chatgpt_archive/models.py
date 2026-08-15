@@ -72,6 +72,9 @@ class ManifestEntry(BaseModel):
     conversation_id: str
     title: str = "Untitled conversation"
     source_url: str
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    source_method: str = "sidebar_dom"
     status: CaptureStatus = CaptureStatus.PENDING
     error: str | None = None
     failures: list["FailureRecord"] = Field(default_factory=list)

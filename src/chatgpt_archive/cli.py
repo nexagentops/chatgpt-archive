@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 import time
 import resource
+import os
+import subprocess
 
 import typer
 
 from .browser import CHATGPT_HOME, NetworkObserver, authenticated_page, interface_is_authenticated
 from .diagnostics import capture_failure_artifacts
-from .discovery import discover
+from .discovery import discover_with_metadata
 from .extractor import PlaywrightAcquirer
 from .markdown import render_conversation
 from .models import CaptureStatus, FailureRecord
@@ -17,6 +20,15 @@ from .storage import ArchiveStore
 from .operations import backup as create_backup, export_csv, migrate as migrate_archive, reindex, verify as verify_archive
 
 app = typer.Typer(help="Local-first archival for conversations owned by the authenticated ChatGPT user.")
+
+
+def _rss_mb() -> float | None:
+    """Return current process RSS using the platform process inspector only."""
+    try:
+        kilobytes = int(subprocess.check_output(["ps", "-o", "rss=", "-p", str(os.getpid())], text=True).strip())
+        return kilobytes / 1024
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        return None
 
 
 def paths(data_dir: Path, profile_dir: Path) -> tuple[ArchiveStore, Path]:
@@ -52,14 +64,29 @@ def discover_command(
 ) -> None:
     """Discover sidebar conversations and merge them into a resumable manifest."""
     store, profile = paths(data_dir, profile_dir)
+    started_at = datetime.now(timezone.utc)
+    started = time.monotonic()
+    previous = store.load_manifest()
+    previous_ids = {entry.conversation_id for entry in previous.entries}
     with authenticated_page(profile, headless=not cdp_url, cdp_url=cdp_url) as page:
         page.goto(CHATGPT_HOME, wait_until="domcontentloaded")
         if not interface_is_authenticated(page):
             raise typer.Exit("Not authenticated. Run `chatgpt-archive login` first.")
-        entries = discover(page, limit=limit)
-        manifest = store.merge_discovery(entries)
+        result = discover_with_metadata(page, limit=limit, on_batch=store.merge_discovery)
+        manifest = store.merge_discovery(result.entries)
+    new_count = sum(entry.conversation_id not in previous_ids for entry in result.entries)
+    existing_count = len(result.entries) - new_count
+    duplicate_count = len(result.entries) - len({entry.conversation_id for entry in result.entries})
+    store.index.record_discovery_run(
+        requested_limit=limit,
+        discovered_count=len(result.entries), new_count=new_count, existing_count=existing_count,
+        duplicate_count=duplicate_count, complete=result.complete,
+        termination_reason=result.termination_reason, source_method_counts=result.source_method_counts,
+        pages_or_batches=result.batches, started_at=started_at,
+        elapsed_seconds=time.monotonic() - started,
+    )
     if verbose:
-        typer.echo(f"run_discovered={len(entries)} manifest_total={len(manifest.entries)}")
+        typer.echo(f"run_discovered={len(result.entries)} new={new_count} existing={existing_count} duplicates={duplicate_count} manifest_total={len(manifest.entries)} termination={result.termination_reason} complete={result.complete} batches={result.batches} sources={result.source_method_counts}")
     typer.echo(f"Discovered {len(manifest.entries)} unique conversations.")
 
 
@@ -87,7 +114,7 @@ def sync(
         pending = pending[:limit]
     run_id = store.index.start_run(limit, len(manifest.entries))
     started = time.monotonic()
-    metrics = {"archived": 0, "failed": 0, "new_count": 0, "changed_count": 0, "unchanged_count": 0, "retried": 0, "structured_count": 0, "dom_count": 0}
+    metrics = {"archived": 0, "failed": 0, "new_count": 0, "changed_count": 0, "unchanged_count": 0, "retried": 0, "structured_count": 0, "dom_count": 0, "starting_rss_mb": _rss_mb()}
     with authenticated_page(profile, headless=not cdp_url, cdp_url=cdp_url) as page:
         if not interface_is_authenticated(page):
             page.goto(CHATGPT_HOME, wait_until="domcontentloaded")
@@ -126,6 +153,7 @@ def sync(
                     metrics["failed"] += 1
                     break
     metrics["peak_rss_mb"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+    metrics["ending_rss_mb"] = _rss_mb()
     metrics["elapsed_seconds"] = time.monotonic() - started
     store.index.finish_run(run_id, "completed" if not metrics["failed"] else "completed_with_failures", **metrics)
     status(data_dir)

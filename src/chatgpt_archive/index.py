@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -47,17 +48,25 @@ class ArchiveIndex:
                     failed INTEGER NOT NULL DEFAULT 0, target_limit INTEGER, new_count INTEGER NOT NULL DEFAULT 0,
                     changed_count INTEGER NOT NULL DEFAULT 0, unchanged_count INTEGER NOT NULL DEFAULT 0,
                     retried INTEGER NOT NULL DEFAULT 0, structured_count INTEGER NOT NULL DEFAULT 0,
-                    dom_count INTEGER NOT NULL DEFAULT 0, peak_rss_mb REAL, elapsed_seconds REAL
+                    dom_count INTEGER NOT NULL DEFAULT 0, peak_rss_mb REAL, elapsed_seconds REAL,
+                    starting_rss_mb REAL, ending_rss_mb REAL
                 );
                 CREATE TABLE IF NOT EXISTS capture_errors (
                     id INTEGER PRIMARY KEY, conversation_id TEXT NOT NULL, stage TEXT NOT NULL,
                     category TEXT NOT NULL, occurred_at TEXT NOT NULL, message TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS discovery_runs (
+                    run_id TEXT PRIMARY KEY, requested_limit INTEGER, discovered_count INTEGER NOT NULL,
+                    new_count INTEGER NOT NULL, existing_count INTEGER NOT NULL, duplicate_count INTEGER NOT NULL,
+                    complete INTEGER NOT NULL, termination_reason TEXT NOT NULL, source_method_counts TEXT NOT NULL,
+                    pages_or_batches INTEGER NOT NULL, started_at TEXT NOT NULL, finished_at TEXT NOT NULL,
+                    elapsed_seconds REAL NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS idx_conversations_captured ON conversations(last_captured_at);
                 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
             """)
             existing = {row[1] for row in connection.execute("PRAGMA table_info(sync_runs)")}
-            for name, sql_type in {"target_limit": "INTEGER", "new_count": "INTEGER NOT NULL DEFAULT 0", "changed_count": "INTEGER NOT NULL DEFAULT 0", "unchanged_count": "INTEGER NOT NULL DEFAULT 0", "retried": "INTEGER NOT NULL DEFAULT 0", "structured_count": "INTEGER NOT NULL DEFAULT 0", "dom_count": "INTEGER NOT NULL DEFAULT 0", "peak_rss_mb": "REAL", "elapsed_seconds": "REAL"}.items():
+            for name, sql_type in {"target_limit": "INTEGER", "new_count": "INTEGER NOT NULL DEFAULT 0", "changed_count": "INTEGER NOT NULL DEFAULT 0", "unchanged_count": "INTEGER NOT NULL DEFAULT 0", "retried": "INTEGER NOT NULL DEFAULT 0", "structured_count": "INTEGER NOT NULL DEFAULT 0", "dom_count": "INTEGER NOT NULL DEFAULT 0", "peak_rss_mb": "REAL", "elapsed_seconds": "REAL", "starting_rss_mb": "REAL", "ending_rss_mb": "REAL"}.items():
                 if name not in existing:
                     connection.execute(f"ALTER TABLE sync_runs ADD COLUMN {name} {sql_type}")
             connection.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)", (INDEX_SCHEMA_VERSION, datetime.now(timezone.utc).isoformat()))
@@ -68,12 +77,30 @@ class ArchiveIndex:
             connection.execute("INSERT INTO sync_runs(run_id, started_at, target_limit, discovered) VALUES (?, ?, ?, ?)", (run_id, datetime.now(timezone.utc).isoformat(), target_limit, discovered))
         return run_id
 
-    def finish_run(self, run_id: str, result: str, **metrics: int | float) -> None:
-        allowed = {"archived", "failed", "new_count", "changed_count", "unchanged_count", "retried", "structured_count", "dom_count", "peak_rss_mb", "elapsed_seconds"}
+    def finish_run(self, run_id: str, result: str, **metrics: int | float | None) -> None:
+        allowed = {"archived", "failed", "new_count", "changed_count", "unchanged_count", "retried", "structured_count", "dom_count", "peak_rss_mb", "elapsed_seconds", "starting_rss_mb", "ending_rss_mb"}
         values = {key: value for key, value in metrics.items() if key in allowed}
         assignments = ", ".join(["ended_at=?", "result=?"] + [f"{key}=?" for key in values])
         with self.connect() as connection:
             connection.execute(f"UPDATE sync_runs SET {assignments} WHERE run_id=?", (datetime.now(timezone.utc).isoformat(), result, *values.values(), run_id))
+
+    def record_discovery_run(
+        self, *, requested_limit: int | None, discovered_count: int, new_count: int,
+        existing_count: int, duplicate_count: int, complete: bool,
+        termination_reason: str, source_method_counts: dict[str, int],
+        pages_or_batches: int, started_at: datetime, elapsed_seconds: float,
+    ) -> None:
+        self.initialize()
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO discovery_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    str(uuid.uuid4()), requested_limit, discovered_count, new_count, existing_count,
+                    duplicate_count, int(complete), termination_reason,
+                    json.dumps(source_method_counts, sort_keys=True), pages_or_batches,
+                    started_at.isoformat(), datetime.now(timezone.utc).isoformat(), elapsed_seconds,
+                ),
+            )
 
     def upsert(self, conversation: Conversation, json_path: Path, markdown_path: Path, content_hash: str) -> None:
         self.initialize()
