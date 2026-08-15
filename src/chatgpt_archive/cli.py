@@ -17,7 +17,7 @@ from .extractor import PlaywrightAcquirer
 from .markdown import render_conversation
 from .models import CaptureStatus, FailureRecord
 from .storage import ArchiveStore
-from .operations import backup as create_backup, export_csv, migrate as migrate_archive, reindex, verify as verify_archive
+from .operations import backup as create_backup, export_csv, migrate as migrate_archive, reindex, render_markdown, verify as verify_archive
 
 app = typer.Typer(help="Local-first archival for conversations owned by the authenticated ChatGPT user.")
 
@@ -74,6 +74,11 @@ def discover_command(
             raise typer.Exit("Not authenticated. Run `chatgpt-archive login` first.")
         result = discover_with_metadata(page, limit=limit, on_batch=store.merge_discovery)
         manifest = store.merge_discovery(result.entries)
+    # A complete structured enumeration is the only authority that can mark a
+    # historical local archive remote-missing.  Canonical JSON is never deleted.
+    store.index.reconcile_remote_presence(
+        {entry.conversation_id for entry in result.entries}, history_complete=result.complete,
+    )
     new_count = sum(entry.conversation_id not in previous_ids for entry in result.entries)
     existing_count = len(result.entries) - new_count
     duplicate_count = len(result.entries) - len({entry.conversation_id for entry in result.entries})
@@ -114,7 +119,7 @@ def sync(
         pending = pending[:limit]
     run_id = store.index.start_run(limit, len(manifest.entries))
     started = time.monotonic()
-    metrics = {"archived": 0, "failed": 0, "new_count": 0, "changed_count": 0, "unchanged_count": 0, "retried": 0, "structured_count": 0, "dom_count": 0, "starting_rss_mb": _rss_mb()}
+    metrics = {"archived": 0, "failed": 0, "new_count": 0, "changed_count": 0, "unchanged_count": 0, "retried": 0, "structured_count": 0, "dom_count": 0, "structured_failures": 0, "dom_failures": 0, "longest_capture_seconds": 0.0, "starting_rss_mb": _rss_mb()}
     with authenticated_page(profile, headless=not cdp_url, cdp_url=cdp_url) as page:
         if not interface_is_authenticated(page):
             page.goto(CHATGPT_HOME, wait_until="domcontentloaded")
@@ -126,7 +131,10 @@ def sync(
                 try:
                     if verbose:
                         typer.echo(f"syncing={entry.conversation_id} attempt={attempt}")
+                    capture_started = time.monotonic()
                     captured = acquirer.fetch(entry.source_url, entry.conversation_id, entry.title)
+                    metrics["longest_capture_seconds"] = max(metrics["longest_capture_seconds"], time.monotonic() - capture_started)
+                    metrics["structured_failures"] += acquirer.structured_failures
                     existing = store.index.get(entry.conversation_id)
                     content_hash = store.content_hash(captured)
                     if existing is None:
@@ -142,6 +150,10 @@ def sync(
                     store.mark_complete(entry.conversation_id)
                     break
                 except Exception as exc:
+                    if acquirer.used_dom_fallback:
+                        metrics["dom_failures"] += 1
+                    else:
+                        metrics["structured_failures"] += acquirer.structured_failures
                     if attempt < max_attempts and type(exc).__name__ in {"RuntimeError", "TimeoutError"}:
                         metrics["retried"] += 1; time.sleep(min(2 ** (attempt - 1), 4)); continue
                     artifacts = capture_failure_artifacts(page, debug_dir, entry.conversation_id) if debug_dir else []
@@ -172,6 +184,12 @@ def status(data_dir: Path = typer.Option(Path("data"))) -> None:
 def reindex_command(data_dir: Path = typer.Option(Path("data"))) -> None:
     """Rebuild the SQLite operational index from canonical JSON without altering archives."""
     typer.echo(f"indexed={reindex(ArchiveStore(data_dir))}")
+
+
+@app.command(name="render-markdown")
+def render_markdown_command(data_dir: Path = typer.Option(Path("data"))) -> None:
+    """Regenerate derived Markdown from canonical JSON without recapturing."""
+    typer.echo(f"rendered={render_markdown(ArchiveStore(data_dir))}")
 
 
 @app.command()

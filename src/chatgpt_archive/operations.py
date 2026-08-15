@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import csv
-import json
 import os
 import shutil
 import tempfile
@@ -25,6 +24,19 @@ def reindex(store: ArchiveStore) -> int:
     for path, conversation in conversations(store):
         markdown = store.markdown_dir / f"{path.stem}.md"
         store.index.upsert(conversation, path, markdown, store.content_hash(conversation))
+        count += 1
+    return count
+
+
+def render_markdown(store: ArchiveStore) -> int:
+    """Regenerate derived Markdown without changing canonical JSON or SQLite."""
+    count = 0
+    for path, conversation in conversations(store):
+        target = store.markdown_dir / f"{path.stem}.md"
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=target.parent, delete=False) as tmp:
+            tmp.write(render_conversation(conversation))
+            name = tmp.name
+        os.replace(name, target)
         count += 1
     return count
 
@@ -84,6 +96,8 @@ def verify(store: ArchiveStore) -> dict[str, int]:
     count = 0
     indexed = {row["conversation_id"]: row for row in store.index.rows()}
     raw_ids: set[str] = set()
+    expected_csv_conversations: dict[str, tuple[str, str]] = {}
+    expected_csv_messages: dict[tuple[str, str], str] = {}
     for path, conversation in conversations(store):
         count += 1; raw_ids.add(conversation.conversation_id)
         if conversation.conversation_id in seen: errors["duplicate_ids"] += 1
@@ -96,9 +110,41 @@ def verify(store: ArchiveStore) -> dict[str, int]:
         row = indexed.get(conversation.conversation_id)
         if row is None: errors["missing_index"] += 1
         elif row["content_hash"] != store.content_hash(conversation): errors["hash_errors"] += 1
+        expected_csv_conversations[conversation.conversation_id] = (conversation.title, store.content_hash(conversation))
+        for message in conversation.messages:
+            expected_csv_messages[(conversation.conversation_id, message.id)] = message.text
     errors["orphan_index"] = len(set(indexed) - raw_ids)
     errors["orphan_files"] = len(list(store.raw_dir.glob("*.json"))) - count
+    _verify_csv_exports(store, expected_csv_conversations, expected_csv_messages, errors)
     return {"conversations": count, **dict(errors), "errors": sum(errors.values())}
+
+
+def _verify_csv_exports(
+    store: ArchiveStore, expected_conversations: dict[str, tuple[str, str]],
+    expected_messages: dict[tuple[str, str], str], errors: Counter[str],
+) -> None:
+    """Check derived CSV rows when exports have been generated locally."""
+    conversations_csv = store.root / "exports" / "conversations.csv"
+    messages_csv = store.root / "exports" / "messages.csv"
+    if not conversations_csv.exists() and not messages_csv.exists():
+        return
+    if not conversations_csv.exists() or not messages_csv.exists():
+        errors["missing_csv"] += 1
+        return
+    try:
+        with conversations_csv.open(encoding="utf-8", newline="") as source:
+            conversation_rows = list(csv.DictReader(source))
+        with messages_csv.open(encoding="utf-8", newline="") as source:
+            message_rows = list(csv.DictReader(source))
+    except (OSError, csv.Error, UnicodeError):
+        errors["invalid_csv"] += 1
+        return
+    actual_conversations = {row.get("conversation_id", ""): (row.get("title", ""), row.get("content_hash", "")) for row in conversation_rows}
+    actual_messages = {(row.get("conversation_id", ""), row.get("message_id", "")): row.get("text", "") for row in message_rows}
+    if len(actual_conversations) != len(conversation_rows) or actual_conversations != expected_conversations:
+        errors["csv_conversations"] += 1
+    if len(actual_messages) != len(message_rows) or actual_messages != expected_messages:
+        errors["csv_messages"] += 1
 
 
 def backup(store: ArchiveStore, destination: Path) -> Path:

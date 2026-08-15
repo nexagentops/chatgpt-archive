@@ -62,8 +62,12 @@ def extract_visible_conversation(page: object, conversation_id: str, title: str,
 class PlaywrightAcquirer:
     def __init__(self, page: object):
         self.page = page
+        self.structured_failures = 0
+        self.used_dom_fallback = False
 
     def fetch(self, source_url: str, conversation_id: str, title: str) -> Conversation:
+        self.structured_failures = 0
+        self.used_dom_fallback = False
         responses: list[object] = []
         def observe(response: object) -> None:
             if "/backend-api/conversation" in urlparse(response.url).path:
@@ -83,7 +87,9 @@ class PlaywrightAcquirer:
                             conversation.title = title
                         return conversation
                 except Exception:
+                    self.structured_failures += 1
                     continue
+            self.used_dom_fallback = True
             return extract_visible_conversation(self.page, conversation_id, title, source_url, navigate=False)
         finally:
             self.page.remove_listener("response", observe)
