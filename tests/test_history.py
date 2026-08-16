@@ -5,6 +5,7 @@ from chatgpt_archive.markdown import render_conversation
 from chatgpt_archive.models import Conversation, Message
 from chatgpt_archive.operations import verify
 from chatgpt_archive.storage import ArchiveStore
+from chatgpt_archive.services import ArchiveService
 
 
 def _conversation(title: str = "Original", text: str = "one", role: str = "user", project: str | None = None) -> Conversation:
@@ -45,3 +46,16 @@ def test_observation_only_state_does_not_change_revision_digest() -> None:
     later.captured_at = later.captured_at.replace(year=2027)
     later.last_observed_at = later.captured_at
     assert revision_id(first) == revision_id(later)
+
+
+def test_history_service_returns_bounded_log_and_semantic_diff(tmp_path: Path) -> None:
+    store = ArchiveStore(tmp_path / "archive")
+    first = _conversation()
+    store.save_conversation(first, "first")
+    second = _conversation(title="Renamed", text="changed", role="assistant", project="project-a")
+    store.save_conversation(second, "second")
+    history = ArchiveService(store).history
+    entries = history.log("history-id", limit=1)
+    assert len(entries) == 1 and entries[0]["revision_id"] == second.current_revision_id
+    result = history.diff("history-id", first.current_revision_id, second.current_revision_id)
+    assert result["title_changed"] and result["project_changed"] and result["messages_changed"] == ["m"]

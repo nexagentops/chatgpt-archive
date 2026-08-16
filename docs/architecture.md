@@ -98,7 +98,7 @@ Remote reconciliation and derived-index changes are never revisions.
 Revision IDs are SHA-256 digests of stable UTF-8 JSON serialization (sorted
 keys and compact separators) of that meaningful state. Revision objects live
 under `revisions/<canonical-conversation-id>/<revision-id>.json`, contain the
-snapshot, revision ID, parent revision ID, and first observation timestamp,
+snapshot, revision ID, parent revision ID, and revision observation timestamp,
 and are atomically written before the canonical current JSON points to them.
 Full immutable snapshots were selected over deltas: they duplicate some data
 but are portable, inspectable, and recoverable without SQLite.

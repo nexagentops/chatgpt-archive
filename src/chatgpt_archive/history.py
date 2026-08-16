@@ -50,7 +50,7 @@ def record_revision(root: Path, conversation: Conversation, parent_revision_id: 
             "revision_id": identifier,
             "canonical_conversation_id": conversation.canonical_conversation_id,
             "parent_revision_id": parent_revision_id,
-            "first_observed_at": (conversation.first_observed_at or datetime.now(timezone.utc)).isoformat(),
+            "observed_at": (conversation.last_observed_at or datetime.now(timezone.utc)).isoformat(),
             "state": meaningful_state(conversation),
         })
     return identifier

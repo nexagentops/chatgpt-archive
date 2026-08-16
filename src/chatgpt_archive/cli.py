@@ -264,6 +264,35 @@ def search(
 
 
 @app.command()
+def log(
+    conversation_id: str,
+    data_dir: Path = typer.Option(Path("data")),
+    limit: int = typer.Option(50, min=1, max=100),
+) -> None:
+    """Show bounded immutable revision history for one conversation."""
+    try:
+        for revision in ArchiveService(ArchiveStore(data_dir)).history.log(conversation_id, limit):
+            typer.echo(f"revision_id={revision['revision_id']} observed={revision['observed_at']} parent={revision['parent_revision_id'] or 'none'}")
+    except (KeyError, ValueError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="conversation_id") from exc
+
+
+@app.command()
+def diff(
+    conversation_id: str,
+    left_revision: str,
+    right_revision: str,
+    data_dir: Path = typer.Option(Path("data")),
+) -> None:
+    """Show a bounded semantic difference between two immutable revisions."""
+    try:
+        result = ArchiveService(ArchiveStore(data_dir)).history.diff(conversation_id, left_revision, right_revision)
+    except KeyError as exc:
+        raise typer.BadParameter(str(exc), param_hint="conversation_id") from exc
+    typer.echo(" ".join(f"{key}={value}" for key, value in result.items()))
+
+
+@app.command()
 def doctor(
     data_dir: Path = typer.Option(Path("data")),
     cdp_url: str | None = typer.Option(None, help="Optional loopback endpoint to validate connectivity."),
