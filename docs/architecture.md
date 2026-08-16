@@ -41,6 +41,44 @@ than embedded in FTS records. API and MCP are intentionally not implemented:
 they must be thin, read-only clients of the same services, and any future HTTP
 server defaults to `127.0.0.1`.
 
+## Canonical identity and provenance
+
+`conversation_id` remains the legacy ChatGPT/provider conversation identifier
+for CLI and filesystem compatibility. Schema v3 adds a stable, archive-facing
+`canonical_conversation_id`: a deterministic SHA-256 namespace digest of
+`provider` and `provider_conversation_id`. It is immutable once written and is
+unaffected by title, message, workspace, project, source, or observation
+changes. `provider_conversation_id` is provider-assigned; `provider` and
+`source_kind` describe provenance; `provider_account_id`, `workspace_id`, and
+`project_id` are nullable because browser acquisition does not reliably expose
+them. `first_observed_at` and `last_observed_at` record observation metadata.
+
+An observed browser ChatGPT conversation uses `provider=chatgpt` and
+`source_kind=browser`. No account/workspace/project value is fabricated.
+Different acquisition sources reconcile only when they prove the same provider
+and provider conversation identifier; otherwise they remain separate pending a
+future explicit reconciliation record. A provider-ID collision that maps to a
+different canonical ID fails closed. Canonical JSON remains sufficient to
+reconstruct these fields; SQLite is only a projection.
+
+### ADR-0003: Deterministic canonical identity with nullable provenance
+
+- **Decision:** Derive canonical identity from a versioned provider namespace
+  and provider conversation ID; keep observational account/workspace/project
+  metadata nullable and separate.
+- **Alternatives:** Use mutable title/content hashes; require account IDs;
+  generate an opaque random ID only.
+- **Why chosen:** Existing ChatGPT IDs are stable and legacy JSON must remain
+  reconstructable without a SQLite mapping. Account/project visibility is not
+  guaranteed by the supported browser capture path.
+- **Tradeoffs:** A future provider with IDs scoped only to an account needs an
+  explicit provider-specific reconciliation strategy rather than silently
+  changing an existing canonical ID.
+- **Evidence:** Migration and stable-ID tests cover legacy records, repeated
+  observations, changes, and collisions.
+- **Revisit condition:** Revisit when a provider supplies only account-scoped
+  identifiers or a real multi-source fixture demonstrates ambiguity.
+
 ## Phased roadmap
 
 | Phase | Objective and scope | Done when |

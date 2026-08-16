@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
+import hashlib
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CaptureStatus(StrEnum):
@@ -46,8 +47,17 @@ class Message(BaseModel):
 
 class Conversation(BaseModel):
     model_config = ConfigDict(extra="allow")
-    schema_version: int = 2
+    schema_version: int = 3
     conversation_id: str
+    canonical_conversation_id: str | None = None
+    provider: str = "chatgpt"
+    provider_conversation_id: str | None = None
+    provider_account_id: str | None = None
+    workspace_id: str | None = None
+    project_id: str | None = None
+    source_kind: str = "browser"
+    first_observed_at: datetime | None = None
+    last_observed_at: datetime | None = None
     title: str = "Untitled conversation"
     source_url: str
     created_at: datetime | None = None
@@ -65,6 +75,23 @@ class Conversation(BaseModel):
     richer_branch_data_available: bool = False
     unsupported_content_types: list[str] = Field(default_factory=list)
     messages: list[Message] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def establish_identity(self) -> "Conversation":
+        """Fill legacy records deterministically without inventing provider metadata."""
+        self.provider_conversation_id = self.provider_conversation_id or self.conversation_id
+        self.canonical_conversation_id = self.canonical_conversation_id or canonical_conversation_id(
+            self.provider, self.provider_conversation_id,
+        )
+        self.first_observed_at = self.first_observed_at or self.captured_at
+        self.last_observed_at = self.last_observed_at or self.captured_at
+        return self
+
+
+def canonical_conversation_id(provider: str, provider_conversation_id: str) -> str:
+    """Stable archive identity; account/project metadata intentionally cannot change it."""
+    identity = f"chatgpt-archive:conversation:v1\0{provider}\0{provider_conversation_id}".encode("utf-8")
+    return f"cc_{hashlib.sha256(identity).hexdigest()}"
 
 
 class ManifestEntry(BaseModel):

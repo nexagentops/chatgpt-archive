@@ -41,15 +41,15 @@ def render_markdown(store: ArchiveStore) -> int:
     return count
 
 
-def migrate(store: ArchiveStore, target_version: int = 2) -> int:
-    """Explicit, per-file atomic v1-to-v2 migration; unsupported versions fail closed."""
+def migrate(store: ArchiveStore, target_version: int = 3) -> int:
+    """Explicit, per-file atomic migration to the supported canonical schema."""
     migrated = 0
     for path, conversation in conversations(store):
         if conversation.schema_version == target_version:
             continue
-        if conversation.schema_version != 1 or target_version != 2:
+        if conversation.schema_version not in {1, 2} or target_version != 3:
             raise ValueError(f"Unsupported archive schema migration: {conversation.schema_version} -> {target_version}")
-        conversation.schema_version = 2
+        conversation.schema_version = 3
         store._atomic_json(path, conversation.model_dump(mode="json"))
         markdown_path = store.markdown_dir / f"{path.stem}.md"
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=markdown_path.parent, delete=False) as tmp:

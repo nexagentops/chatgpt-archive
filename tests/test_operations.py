@@ -49,13 +49,13 @@ def test_backup_excludes_browser_state_and_preserves_archive(tmp_path: Path) -> 
     assert not (target / ".playwright-profile").exists()
 
 
-def test_explicit_v1_to_v2_migration_is_idempotent(tmp_path: Path) -> None:
+def test_explicit_v1_to_v3_migration_is_idempotent(tmp_path: Path) -> None:
     store = ArchiveStore(tmp_path / "archive")
     item = conversation(); item.schema_version = 1
     store.save_conversation(item, render_conversation(item))
     assert migrate(store) == 1
     assert migrate(store) == 0
-    assert next(iter(__import__("chatgpt_archive.operations", fromlist=["conversations"]).conversations(store)))[1].schema_version == 2
+    assert next(iter(__import__("chatgpt_archive.operations", fromlist=["conversations"]).conversations(store)))[1].schema_version == 3
 
 
 def test_sync_run_metrics_are_persisted(tmp_path: Path) -> None:

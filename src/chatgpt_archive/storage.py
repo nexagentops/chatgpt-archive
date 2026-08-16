@@ -29,9 +29,10 @@ class ArchiveStore:
 
     @staticmethod
     def content_hash(conversation: Conversation) -> str:
-        """Hash canonical content while excluding the volatile capture timestamp."""
+        """Hash meaningful current state while excluding observation-only timestamps."""
         value = conversation.model_dump(mode="json")
-        value.pop("captured_at", None)
+        for key in ("captured_at", "first_observed_at", "last_observed_at"):
+            value.pop(key, None)
         encoded = json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 
@@ -69,6 +70,11 @@ class ArchiveStore:
         self.initialize()
         stem = self.filename_stem(conversation.conversation_id)
         raw_path = self.raw_dir / f"{stem}.json"
+        if raw_path.exists():
+            existing = Conversation.model_validate_json(raw_path.read_text(encoding="utf-8"))
+            if existing.canonical_conversation_id != conversation.canonical_conversation_id:
+                raise ValueError("Provider conversation ID collision maps to a different canonical conversation ID.")
+            conversation.first_observed_at = existing.first_observed_at
         self._atomic_json(raw_path, conversation.model_dump(mode="json"))
         target = self.markdown_dir / f"{stem}.md"
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=target.parent, delete=False) as tmp:
