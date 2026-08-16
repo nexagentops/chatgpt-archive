@@ -52,6 +52,10 @@ def migrate(store: ArchiveStore, target_version: int = 3) -> int:
         if conversation.schema_version not in {1, 2} or target_version != 3:
             raise ValueError(f"Unsupported archive schema migration: {conversation.schema_version} -> {target_version}")
         conversation.schema_version = 3
+        # A legacy schema's state serializes differently. It can become a
+        # revision only on a subsequent current-state persistence, not by
+        # rewriting historical meaning during migration.
+        conversation.current_revision_id = None
         store._atomic_json(path, conversation.model_dump(mode="json"))
         markdown_path = store.markdown_dir / f"{path.stem}.md"
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=markdown_path.parent, delete=False) as tmp:
@@ -112,9 +116,7 @@ def verify(store: ArchiveStore) -> dict[str, int]:
         row = indexed.get(conversation.conversation_id)
         if row is None: errors["missing_index"] += 1
         elif row["content_hash"] != store.content_hash(conversation): errors["hash_errors"] += 1
-        if not conversation.current_revision_id:
-            errors["missing_current_revision"] += 1
-        else:
+        if conversation.current_revision_id:
             path = revision_path(store.root, conversation, conversation.current_revision_id)
             if not path.exists():
                 errors["missing_revision"] += 1

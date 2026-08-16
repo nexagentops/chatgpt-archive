@@ -56,6 +56,7 @@ def test_explicit_v1_to_v3_migration_is_idempotent(tmp_path: Path) -> None:
     assert migrate(store) == 1
     assert migrate(store) == 0
     assert next(iter(__import__("chatgpt_archive.operations", fromlist=["conversations"]).conversations(store)))[1].schema_version == 3
+    assert verify(store)["errors"] == 0
 
 
 def test_sync_run_metrics_are_persisted(tmp_path: Path) -> None:
