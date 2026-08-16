@@ -50,15 +50,15 @@ isolated authenticated browser
 → structured history discovery
 → structured conversation acquisition / DOM fallback
 → canonical JSON
-→ SQLite operational index
+→ SQLite operational index and FTS5 search projection
 → Markdown / CSV derived exports
 ```
 
 ## Archive contract
 
 - **JSON** is the canonical, portable archive representation.
-- **SQLite** is transactional operational/index state and is rebuildable from
-  canonical JSON.
+- **SQLite** is transactional operational/index state and a rebuildable FTS5
+  search projection from canonical JSON.
 - **Markdown** and **CSV** are deterministic derived exports.
 
 Successful storage does not imply every content type is complete. Each JSON
@@ -132,6 +132,7 @@ chatgpt-archive render-markdown
 chatgpt-archive export-csv
 chatgpt-archive reindex
 chatgpt-archive verify
+chatgpt-archive search "mixture of experts" --role assistant
 chatgpt-archive backup /safe/empty/destination
 chatgpt-archive migrate
 chatgpt-archive doctor --cdp-url http://127.0.0.1:9222
@@ -139,8 +140,11 @@ chatgpt-archive doctor --cdp-url http://127.0.0.1:9222
 
 `render-markdown` and `export-csv` regenerate derived files from canonical
 JSON without browser access. `verify` checks JSON/schema parsing, IDs,
-message ordering and parents, hashes, Markdown linkage, SQLite consistency,
-and existing CSV exports. `backup` copies archive material only—never browser
+message ordering and parents, hashes, Markdown linkage, SQLite and FTS search
+projection consistency, and existing CSV exports. `search` is local-only and
+uses the same service boundary intended for future HTTP, MCP, and UI clients.
+Run `reindex` once after upgrading an existing v1 archive to populate the
+rebuildable FTS projection. `backup` copies archive material only—never browser
 profiles—and can be verified after restore into a clean directory. `migrate`
 is explicit and only supports known canonical schema transitions.
 
