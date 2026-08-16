@@ -19,6 +19,7 @@ from .markdown import render_conversation
 from .models import CaptureStatus, FailureRecord
 from .storage import ArchiveStore
 from .operations import backup as create_backup, export_csv, migrate as migrate_archive, reindex, render_markdown, verify as verify_archive
+from .services import ArchiveService
 
 app = typer.Typer(help="Local-first archival for conversations owned by the authenticated ChatGPT user.")
 
@@ -237,6 +238,29 @@ def stats(data_dir: Path = typer.Option(Path("data"))) -> None:
     typer.echo(f"conversations={totals['conversations']} messages={totals['messages']}")
     if run := store.index.latest_run():
         typer.echo(f"last_run={run['result']} archived={run['archived']} failed={run['failed']} structured={run['structured_count']} dom={run['dom_count']} peak_rss_mb={run['peak_rss_mb']}")
+
+
+@app.command()
+def search(
+    query: str,
+    data_dir: Path = typer.Option(Path("data")),
+    conversation: str | None = typer.Option(None, help="Restrict results to one canonical conversation ID."),
+    role: str | None = typer.Option(None, help="Restrict results to a message role."),
+    limit: int = typer.Option(20, min=1, max=100),
+) -> None:
+    """Search local archive content with the reusable FTS search service."""
+    try:
+        results = ArchiveService(ArchiveStore(data_dir)).search.search(
+            query, conversation_id=conversation, role=role, limit=limit,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="query") from exc
+    for result in results:
+        typer.echo(
+            f"conversation_id={result.conversation_id} message_id={result.message_id} "
+            f"provider={result.provider_id} role={result.role} timestamp={result.timestamp or 'unknown'} "
+            f"title={result.title}\n{result.snippet}"
+        )
 
 
 @app.command()

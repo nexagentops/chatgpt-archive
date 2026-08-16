@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .models import Conversation
 
-INDEX_SCHEMA_VERSION = 1
+INDEX_SCHEMA_VERSION = 2
 
 
 class ArchiveIndex:
@@ -79,7 +79,30 @@ class ArchiveIndex:
             }.items():
                 if name not in existing_conversations:
                     connection.execute(f"ALTER TABLE conversations ADD COLUMN {name} {sql_type}")
-            connection.execute("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)", (INDEX_SCHEMA_VERSION, datetime.now(timezone.utc).isoformat()))
+            current_version = connection.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").fetchone()[0]
+            if current_version > INDEX_SCHEMA_VERSION:
+                raise RuntimeError(
+                    f"Archive index schema {current_version} is newer than this version supports ({INDEX_SCHEMA_VERSION})."
+                )
+            if current_version < 1:
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                    (1, datetime.now(timezone.utc).isoformat()),
+                )
+                current_version = 1
+            if current_version < 2:
+                # This is a rebuildable projection of canonical JSON, never an
+                # authority for archive content. Existing archives are filled by
+                # the explicit reindex command rather than a hidden full scan.
+                connection.execute(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS message_fts "
+                    "USING fts5(conversation_id UNINDEXED, message_id UNINDEXED, title, text, "
+                    "tokenize='unicode61 remove_diacritics 2')"
+                )
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                    (2, datetime.now(timezone.utc).isoformat()),
+                )
 
     def start_run(self, target_limit: int | None, discovered: int) -> str:
         self.initialize(); run_id = str(uuid.uuid4())
@@ -137,6 +160,52 @@ class ArchiveIndex:
                 (conversation.conversation_id, message.id, message.parent_id, message.sequence, message.branch, message.role, _iso(message.timestamp), message.model, message.content_type, int(bool(message.attachments)), int(message.content_type == "tool"))
                 for message in conversation.messages
             ])
+            connection.execute("DELETE FROM message_fts WHERE conversation_id=?", (conversation.conversation_id,))
+            connection.executemany(
+                "INSERT INTO message_fts(conversation_id, message_id, title, text) VALUES (?, ?, ?, ?)",
+                [
+                    (conversation.conversation_id, message.id, conversation.title, message.text)
+                    for message in conversation.messages
+                ],
+            )
+
+    def search_messages(
+        self, query: str, *, conversation_id: str | None = None, role: str | None = None, limit: int = 20,
+    ) -> list[sqlite3.Row]:
+        """Search the local FTS projection without reading archive files into memory."""
+        self.initialize()
+        clauses = ["message_fts MATCH ?"]
+        values: list[object] = [_fts_query(query)]
+        if conversation_id:
+            clauses.append("message_fts.conversation_id=?")
+            values.append(conversation_id)
+        if role:
+            clauses.append("messages.role=?")
+            values.append(role)
+        values.append(limit)
+        with self.connect() as connection:
+            return connection.execute(
+                f"""SELECT message_fts.conversation_id, message_fts.message_id, conversations.title,
+                           messages.timestamp, messages.role, messages.model,
+                           snippet(message_fts, 3, '[', ']', '…', 16) AS snippet,
+                           bm25(message_fts) AS rank
+                    FROM message_fts
+                    JOIN messages ON messages.conversation_id=message_fts.conversation_id
+                                 AND messages.message_id=message_fts.message_id
+                    JOIN conversations ON conversations.conversation_id=message_fts.conversation_id
+                    WHERE {' AND '.join(clauses)}
+                    ORDER BY rank, messages.timestamp, message_fts.conversation_id, message_fts.message_id
+                    LIMIT ?""",
+                values,
+            ).fetchall()
+
+    def fts_rows(self, conversation_id: str, message_id: str) -> list[sqlite3.Row]:
+        self.initialize()
+        with self.connect() as connection:
+            return connection.execute(
+                "SELECT title, text FROM message_fts WHERE conversation_id=? AND message_id=?",
+                (conversation_id, message_id),
+            ).fetchall()
 
     def totals(self) -> dict[str, int]:
         self.initialize()
@@ -190,3 +259,11 @@ class ArchiveIndex:
 
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
+
+
+def _fts_query(query: str) -> str:
+    """Treat user input as literal lexical terms, not FTS syntax."""
+    terms = [term for term in query.split() if term]
+    if not terms:
+        raise ValueError("Search query must contain at least one non-whitespace term.")
+    return " AND ".join(f'"{term.replace(chr(34), chr(34) * 2)}"' for term in terms)

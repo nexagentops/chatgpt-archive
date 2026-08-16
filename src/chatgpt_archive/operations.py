@@ -113,6 +113,9 @@ def verify(store: ArchiveStore) -> dict[str, int]:
         expected_csv_conversations[conversation.conversation_id] = (conversation.title, store.content_hash(conversation))
         for message in conversation.messages:
             expected_csv_messages[(conversation.conversation_id, message.id)] = message.text
+            fts_rows = store.index.fts_rows(conversation.conversation_id, message.id)
+            if len(fts_rows) != 1 or fts_rows[0]["title"] != conversation.title or fts_rows[0]["text"] != message.text:
+                errors["search_index"] += 1
     errors["orphan_index"] = len(set(indexed) - raw_ids)
     errors["orphan_files"] = len(list(store.raw_dir.glob("*.json"))) - count
     _verify_csv_exports(store, expected_csv_conversations, expected_csv_messages, errors)
