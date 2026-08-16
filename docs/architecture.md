@@ -79,6 +79,48 @@ reconstruct these fields; SQLite is only a projection.
 - **Revisit condition:** Revisit when a provider supplies only account-scoped
   identifiers or a real multi-source fixture demonstrates ambiguity.
 
+## Conversation revision semantics
+
+A revision is an immutable, content-addressed snapshot of meaningful canonical
+conversation state. Meaningful state includes canonical/provider identity,
+provider account metadata when observable, workspace/project placement, title,
+provider timestamps, and complete normalized messages (including role, order,
+text, parent/branch relationships, model and attachment metadata). It excludes
+capture timestamps, first/last observation timestamps, capture method/status,
+capture notes, completeness flags, source URL/kind, current revision pointer,
+SQLite rows, FTS rows, Markdown, CSV, and remote-presence reconciliation.
+
+Consequently title, message additions/removals/edits/roles/order, and
+workspace/project changes create revisions. A repeated capture of identical
+meaningful state only updates observation metadata and creates no revision.
+Remote reconciliation and derived-index changes are never revisions.
+
+Revision IDs are SHA-256 digests of stable UTF-8 JSON serialization (sorted
+keys and compact separators) of that meaningful state. Revision objects live
+under `revisions/<canonical-conversation-id>/<revision-id>.json`, contain the
+snapshot, revision ID, parent revision ID, and first observation timestamp,
+and are atomically written before the canonical current JSON points to them.
+Full immutable snapshots were selected over deltas: they duplicate some data
+but are portable, inspectable, and recoverable without SQLite.
+
+Legacy archives gain their first revision only when a current state is next
+persisted; the project does not pretend to know a revision history before
+tracking began.
+
+### ADR-0004: Content-addressed full snapshots, separate from observations
+
+- **Decision:** Store full immutable meaningful-state snapshots addressed by
+  SHA-256 and link each new revision to the preceding current revision.
+- **Alternatives:** Full files per sync; deltas; SQLite-only revision history.
+- **Why chosen:** A content address deduplicates unchanged state, while a full
+  JSON object is independently recoverable and easy to verify.
+- **Tradeoffs:** Changed large conversations use more disk than deltas. This is
+  accepted until synthetic benchmarks demonstrate a concrete need to optimize.
+- **Evidence:** The existing archive contract already prefers portable JSON and
+  rebuildable SQLite projections.
+- **Revisit condition:** Revisit if benchmarked storage growth or diff latency
+  makes full snapshots unacceptable without sacrificing recoverability.
+
 ## Phased roadmap
 
 | Phase | Objective and scope | Done when |
