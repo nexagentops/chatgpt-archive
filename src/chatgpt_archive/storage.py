@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .index import ArchiveIndex
+from .history import record_revision
 from .models import CaptureStatus, Conversation, FailureRecord, Manifest, ManifestEntry
 
 
@@ -19,12 +20,14 @@ class ArchiveStore:
         self.root = root
         self.raw_dir = root / "raw"
         self.markdown_dir = root / "markdown"
+        self.revisions_dir = root / "revisions"
         self.manifest_path = root / "manifest.json"
         self.index = ArchiveIndex(root / "archive.db")
 
     def initialize(self) -> None:
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.markdown_dir.mkdir(parents=True, exist_ok=True)
+        self.revisions_dir.mkdir(parents=True, exist_ok=True)
         self.index.initialize()
 
     @staticmethod
@@ -70,11 +73,14 @@ class ArchiveStore:
         self.initialize()
         stem = self.filename_stem(conversation.conversation_id)
         raw_path = self.raw_dir / f"{stem}.json"
+        parent_revision_id = None
         if raw_path.exists():
             existing = Conversation.model_validate_json(raw_path.read_text(encoding="utf-8"))
             if existing.canonical_conversation_id != conversation.canonical_conversation_id:
                 raise ValueError("Provider conversation ID collision maps to a different canonical conversation ID.")
             conversation.first_observed_at = existing.first_observed_at
+            parent_revision_id = existing.current_revision_id
+        conversation.current_revision_id = record_revision(self.root, conversation, parent_revision_id, self._atomic_json)
         self._atomic_json(raw_path, conversation.model_dump(mode="json"))
         target = self.markdown_dir / f"{stem}.md"
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=target.parent, delete=False) as tmp:

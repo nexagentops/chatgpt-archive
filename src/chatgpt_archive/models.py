@@ -58,6 +58,7 @@ class Conversation(BaseModel):
     source_kind: str = "browser"
     first_observed_at: datetime | None = None
     last_observed_at: datetime | None = None
+    current_revision_id: str | None = None
     title: str = "Untitled conversation"
     source_url: str
     created_at: datetime | None = None

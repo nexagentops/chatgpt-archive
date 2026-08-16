@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import os
 import shutil
 import tempfile
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .models import Conversation
+from .history import revision_id, revision_path
 from .storage import ArchiveStore
 from .markdown import render_conversation
 
@@ -110,6 +112,19 @@ def verify(store: ArchiveStore) -> dict[str, int]:
         row = indexed.get(conversation.conversation_id)
         if row is None: errors["missing_index"] += 1
         elif row["content_hash"] != store.content_hash(conversation): errors["hash_errors"] += 1
+        if not conversation.current_revision_id:
+            errors["missing_current_revision"] += 1
+        else:
+            path = revision_path(store.root, conversation, conversation.current_revision_id)
+            if not path.exists():
+                errors["missing_revision"] += 1
+            else:
+                try:
+                    revision = json.loads(path.read_text(encoding="utf-8"))
+                    if revision.get("revision_id") != conversation.current_revision_id or revision_id(conversation) != conversation.current_revision_id:
+                        errors["revision_hash"] += 1
+                except (OSError, ValueError):
+                    errors["invalid_revision"] += 1
         expected_csv_conversations[conversation.conversation_id] = (conversation.title, store.content_hash(conversation))
         for message in conversation.messages:
             expected_csv_messages[(conversation.conversation_id, message.id)] = message.text
@@ -153,7 +168,7 @@ def _verify_csv_exports(
 def backup(store: ArchiveStore, destination: Path) -> Path:
     if destination.exists(): raise FileExistsError("Backup destination must not already exist.")
     destination.mkdir(parents=True)
-    for name in ("raw", "markdown", "manifest.json", "archive.db", "exports"):
+    for name in ("raw", "markdown", "revisions", "manifest.json", "archive.db", "exports"):
         source = store.root / name
         if source.is_dir(): shutil.copytree(source, destination / name)
         elif source.exists(): shutil.copy2(source, destination / name)
